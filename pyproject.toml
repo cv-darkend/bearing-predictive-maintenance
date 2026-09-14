@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Reproducible research scaffold for bearing condition monitoring and predictive maintenance."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "jupyterlab>=4.3",
     "kaggle>=1.7.4",
@@ -46,6 +46,6 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 files = ["src", "tests"]

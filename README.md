@@ -10,7 +10,7 @@ The repository's MIT license applies only to original code and documentation. Be
 
 ## Prerequisites
 
-- Python 3.11 or newer
+- Python 3.12 or newer
 - [uv](https://docs.astral.sh/uv/)
 - A Kaggle account with access to the dataset
 - Sufficient local storage for the download, extraction, and derived data
