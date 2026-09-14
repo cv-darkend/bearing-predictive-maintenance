@@ -1,0 +1,39 @@
+# Local Pi runtime state
+.atl/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+kaggle.json
+.kaggle/
+
+# Dataset artifacts (never commit Kaggle data)
+data/raw/
+data/interim/
+data/processed/
+data/external/
+*.zip
+
+# Generated reports and model artifacts
+reports/figures/
+artifacts/
