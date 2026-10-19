@@ -61,7 +61,8 @@ make lint        # Check formatting and lint rules
 make typecheck   # Run strict static type checking
 make test        # Run tests with coverage
 make check       # Run every CI check
-make notebook    # Start JupyterLab
+make notebook    # Open the marimo editor on notebooks/
+make notebooks   # Export notebooks to build/notebooks/ (.ipynb with outputs, .html)
 ```
 
 CI deliberately runs without Kaggle credentials and never downloads the dataset.
