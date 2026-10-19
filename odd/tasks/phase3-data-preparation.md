@@ -33,10 +33,10 @@ strategy asked before PR creation) · runner `uv run pytest`, `make check`.
 
 ## Tasks
 
-- [ ] T1 — S2, S3: `manifest.py` (+ tests): cleaning flags, time axes, `operating_hours` helper,
+- [x] T1 — S2, S3: `manifest.py` (+ tests): cleaning flags, time axes, `operating_hours` helper,
   CLI `bearing-manifest` → `data/processed/ims_snapshot_manifest.csv`. Route: delegated (Writer
   trigger (a) parallel with T2, disjoint files; also context backstop).
-- [ ] T2 — S4, S6: `segmentation.py` (+ tests): DC removal, full window + 10 segments of 2048;
+- [x] T2 — S4, S6: `segmentation.py` (+ tests): DC removal, full window + 10 segments of 2048;
   `folds.py` (+ tests): leave-one-test-out splits and train-only standardization. Route: delegated
   (parallel with T1).
 - [ ] T3 — S7: notebook 03 + report + Makefile/pyproject wiring + README. Route: after T1-T2.
@@ -51,3 +51,8 @@ strategy asked before PR creation) · runner `uv run pytest`, `make check`.
 - L3 (2026-10-18) — User: "De acuerdo con el Mixto." (full snapshot as unit + 10 segments).
 - L4 (2026-10-18) — Forecast ~700-900 authored lines; delivery strategy ask-on-risk, chain
   strategy question deferred to PR creation (no PR planned before Phase III closes).
+- L5 (2026-10-18) — T1 1bb3873 (13 tests; real data 46480 rows, 46468 valid, post-shutdown
+  files 0/2/1, saturated files 3/2/4, 1876 test-3 files after documented end, operating hours
+  345.27/163.83/1053.38). T2 5aea5da (23 tests; sklearn not used: no py.typed under mypy strict;
+  test 2 ch1 segment-RMS CV median 2.97%). Wiring 9e7aebc (`make manifest`, README). make check
+  91 passed after clearing a stale .mypy_cache. T3 delegated (context backstop).
