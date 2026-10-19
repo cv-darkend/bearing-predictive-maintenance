@@ -553,20 +553,50 @@ def _(indicators, np, pd):
     test1 = indicators[indicators["test_id"] == "1"]
     xy_corr_rows = []
     for _bearing in range(1, 5):
-        x_series = (
+        x_axis = (
             test1[(test1["bearing"] == _bearing) & (test1["axis"] == "x")]
-            .sort_values("elapsed_hours")["rms"]
-            .to_numpy()
+            .sort_values("elapsed_hours")
+            .reset_index(drop=True)
         )
-        y_series = (
+        y_axis = (
             test1[(test1["bearing"] == _bearing) & (test1["axis"] == "y")]
-            .sort_values("elapsed_hours")["rms"]
-            .to_numpy()
+            .sort_values("elapsed_hours")
+            .reset_index(drop=True)
         )
-        r = float(np.corrcoef(x_series, y_series)[0, 1])
-        xy_corr_rows.append({"rodamiento": _bearing, "correlacion_rms_x_y": r})
-    pd.DataFrame(xy_corr_rows)
-    return (test1,)
+        _row = {
+            "rodamiento": _bearing,
+            "correlacion_rms_x_y": float(
+                np.corrcoef(x_axis["rms"].to_numpy(), y_axis["rms"].to_numpy())[0, 1]
+            ),
+        }
+        # Spearman (rank) correlation is robust to the few extreme late-life values.
+        for _metric in ("rms", "kurtosis", "crest_factor"):
+            _row[f"spearman_{_metric}_x_y"] = float(
+                x_axis[_metric].corr(y_axis[_metric], method="spearman")
+            )
+        xy_corr_rows.append(_row)
+    xy_corr = pd.DataFrame(xy_corr_rows).set_index("rodamiento")
+    xy_corr
+    return test1, xy_corr
+
+
+@app.cell(hide_code=True)
+def _(mo, xy_corr):
+    def _fmt(column):
+        return "/".join(f"{v:.2f}" for v in xy_corr[column])
+
+    _impulsive = xy_corr[["spearman_kurtosis_x_y", "spearman_crest_factor_x_y"]]
+    mo.md(f"""
+    **Lectura (rodamientos 1-4):** la correlación entre los ejes x e y es alta para el RMS
+    (Pearson {_fmt("correlacion_rms_x_y")}; Spearman {_fmt("spearman_rms_x_y")}), pero
+    mucho menor para los indicadores de impulsividad (Spearman curtosis
+    {_fmt("spearman_kurtosis_x_y")}; factor de cresta {_fmt("spearman_crest_factor_x_y")};
+    rango {_impulsive.min().min():.2f}-{_impulsive.max().max():.2f}). La redundancia entre
+    ejes vale **solo para el RMS**: en rodamientos sanos la curtosis y el factor de cresta de
+    cada eje varían de forma casi independiente, de modo que promediar o descartar un eje
+    pierde información impulsiva.
+    """)
+    return
 
 
 @app.cell
@@ -1236,7 +1266,10 @@ def _(mo):
     Además, varios parámetros de esta exploración se eligieron mirando la serie completa: las
     bandas de envolvente se derivan de la captura de fin de vida, y los umbrales de onset y de
     apagado usan la propia serie. Si se reutilizan en la Fase III son **fuga de la etiqueta**: deben
-    fijarse a priori o ajustarse solo con los datos de entrenamiento de cada partición.
+    fijarse a priori o ajustarse solo con los datos de entrenamiento de cada partición. Para la
+    envolvente, una banda fija elegida sin mirar las capturas de fin de vida (por ejemplo
+    2-8 kHz, la usada en una exploración paralela del equipo) es una opción sin fuga para la
+    Fase IV; aquí no se recalcularon los resultados de envolvente con esa banda.
     """)
     return
 
@@ -1298,7 +1331,9 @@ def _(mo):
     intermedio (|r| 0.57-0.64 con la familia de impulsividad y 0.33-0.36 con RMS y energía) y la
     asimetría no se correlaciona con ningún otro
     (|r| ≤ 0.16). Estas correlaciones mezclan rodamientos y momentos con una tendencia compartida,
-    lo que las infla; no miden la redundancia entre rodamientos del mismo eje. Para la Fase III son
+    lo que las infla; no miden la redundancia entre rodamientos del mismo eje. Entre los ejes x/y
+    del test 1, la redundancia vale solo para el RMS: la curtosis y el factor de cresta difieren
+    entre ejes en rodamientos sanos (sección de correlación entre ejes). Para la Fase III son
     prometedoras una variable de energía (RMS), una de impulsividad (curtosis o factor de cresta,
     preferiblemente con una versión robusta a muestras aisladas) y las amplitudes de envolvente en
     las frecuencias características, que solo mostraron una huella clara en pista externa, sin

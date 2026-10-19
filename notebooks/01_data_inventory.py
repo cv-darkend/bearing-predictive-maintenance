@@ -32,6 +32,7 @@ def _():
     from pathlib import Path
 
     import matplotlib.pyplot as plt
+    import numpy as np
     import pandas as pd
 
     from bearing_predictive_maintenance import ims
@@ -52,13 +53,16 @@ def _():
 
     REPO_ROOT = Path(__file__).resolve().parent.parent
     INTERIM_DIR = REPO_ROOT / "data" / "interim"
+    RAW_ROOT = REPO_ROOT / "data" / "raw"
     FIGURES_DIR = REPO_ROOT / "reports" / "figures"
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
     return (
         FIGURES_DIR,
         INTERIM_DIR,
+        RAW_ROOT,
         flag_post_shutdown,
         ims,
+        np,
         pd,
         plt,
         summarize_inventory,
@@ -116,6 +120,7 @@ def _(ims, inventory, pd, summarize_inventory):
                 "archivos_canales_distintos": summary.channel_count_mismatch_count,
                 "archivos_saturados": summary.saturated_file_count,
                 "muestras_saturadas": summary.saturated_value_count,
+                "archivos_contenido_duplicado": summary.duplicate_content_count,
             }
         )
     summary_table = pd.DataFrame(summary_rows).set_index("test")
@@ -129,11 +134,13 @@ def _(mo):
     **Lectura de la tabla:** en los tres tests todos los archivos tienen 20480 filas, ninguno falla
     al leerse (`errores_lectura` = 0), ninguno contiene valores no numéricos o no finitos
     (`valores_no_finitos` = 0), todos tienen el número de columnas que documenta el mapa de canales
-    (`archivos_canales_distintos` = 0) y no hay timestamps duplicados. Sí hay muestras en el
-    límite de adquisición (±4.999), solo en las capturas finales de cada test (sección de
-    saturación más abajo). Los tests 1 y 2 coinciden
-    exactamente con la documentación de NASA en conteo de archivos e inicio/fin. El test 3 no: ver
-    la sección de discrepancia más abajo.
+    (`archivos_canales_distintos` = 0) y no hay timestamps duplicados. Tampoco hay archivos con
+    contenido idéntico a otro: `archivos_contenido_duplicado` cuenta los archivos cuyo hash
+    SHA-256 de bytes crudos (`content_sha256` del inventario) repite el de un archivo anterior
+    (sección de duplicados más abajo). Sí hay muestras en el límite de adquisición (rieles
+    −5.000 / +4.998), solo en las capturas finales de cada test (sección de saturación más
+    abajo). Los tests 1 y 2 coinciden exactamente con la documentación de NASA en conteo de
+    archivos e inicio/fin. El test 3 no: ver la sección de discrepancia más abajo.
 
     **Frecuencia de muestreo:** el `readme` de NASA describe cada archivo como una captura de
     "1 segundo" de 20480 puntos a 20 kHz, lo que es internamente inconsistente (20480 / 20000 =
@@ -299,6 +306,153 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ### Intervalos cortos (< 240 s) entre capturas consecutivas
+
+    Además de las ráfagas a 5 minutos, hay intervalos aislados más cortos que 240 s. Para cada uno
+    se indica el hueco previo: si supera 1.5× la mediana (900 s), el intervalo corto aparece justo
+    después de una pausa del banco (reanudación de la adquisición).
+    """)
+    return
+
+
+@app.cell
+def _(inventory, pd):
+    SHORT_INTERVAL_S = 240.0
+    _rows = []
+    for _test_id, _group in inventory.sort_values("timestamp").groupby("test_id"):
+        _group = _group.reset_index(drop=True)
+        _previous_gap = _group["gap_seconds"].shift()
+        _median_gap = _group["gap_seconds"].median()
+        for _i in _group.index[_group["gap_seconds"] < SHORT_INTERVAL_S]:
+            if pd.isna(_previous_gap[_i]):
+                _context = "inicio del test"
+            elif _previous_gap[_i] > 1.5 * _median_gap:
+                _context = "tras una pausa"
+            else:
+                _context = "cadencia normal"
+            _rows.append(
+                {
+                    "test": _test_id,
+                    "archivo": _group.loc[_i, "file"],
+                    "intervalo_s": _group.loc[_i, "gap_seconds"],
+                    "hueco_previo_s": _previous_gap[_i],
+                    "contexto": _context,
+                }
+            )
+    short_intervals = pd.DataFrame(
+        _rows, columns=["test", "archivo", "intervalo_s", "hueco_previo_s", "contexto"]
+    )
+    short_intervals
+    return (short_intervals,)
+
+
+@app.cell(hide_code=True)
+def _(mo, short_intervals):
+    _counts = short_intervals.groupby(["test", "contexto"]).size()
+    _per_test = short_intervals.groupby("test").size()
+    _test3 = short_intervals[short_intervals["test"] == "3"]["intervalo_s"]
+    mo.md(f"""
+    **Lectura:** el test 1 tiene **{_per_test.get("1", 0)}** intervalos < 240 s
+    ({_counts.get(("1", "tras una pausa"), 0)} justo después de una pausa y
+    {_counts.get(("1", "inicio del test"), 0)} al inicio del test), el test 2 tiene
+    **{_per_test.get("2", 0)}** y el test 3 tiene **{_per_test.get("3", 0)}**
+    ({", ".join(f"{v:.0f} s" for v in _test3)}, ambos tras una pausa). Son reanudaciones de la
+    adquisición, no errores; el más corto (13 s) se revisa en la sección de duplicados.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Duplicados por contenido y el par de capturas a 13 s
+
+    El inventario guarda el hash SHA-256 de los bytes crudos de cada archivo (`content_sha256`);
+    dos archivos con el mismo hash tendrían contenido idéntico aunque su nombre (timestamp) sea
+    distinto.
+    """)
+    return
+
+
+@app.cell
+def _(inventory, pd):
+    _hashes = inventory["content_sha256"].fillna("")
+    _hashes = _hashes[_hashes != ""]
+    content_duplicates = pd.DataFrame(
+        [
+            {
+                "archivos_con_hash": len(_hashes),
+                "hashes_distintos": _hashes.nunique(),
+                "archivos_contenido_duplicado": int(_hashes.duplicated().sum()),
+            }
+        ]
+    )
+    content_duplicates
+    return
+
+
+@app.cell
+def _(RAW_ROOT, ims, inventory, np, pd):
+    # The closest pair of consecutive snapshots ("posible duplicado"): same rig state 13 s apart?
+    _sorted = inventory.sort_values(["test_id", "timestamp"]).reset_index(drop=True)
+    _second = _sorted["gap_seconds"].idxmin()
+    _first = _second - 1
+    close_pair_test = _sorted.loc[_second, "test_id"]
+    close_pair_files = (_sorted.loc[_first, "file"], _sorted.loc[_second, "file"])
+    close_pair_gap = float(_sorted.loc[_second, "gap_seconds"])
+    _spec = ims.TEST_REGISTRY[close_pair_test]
+    _a, _b = (
+        ims.load_snapshot(RAW_ROOT / _spec.raw_relative_path / name) for name in close_pair_files
+    )
+    _rms_a = np.sqrt(np.mean(_a**2, axis=0))
+    _rms_b = np.sqrt(np.mean(_b**2, axis=0))
+    close_pair = pd.DataFrame(
+        {
+            "canal": np.arange(_a.shape[1]),
+            "rms_a": _rms_a,
+            "rms_b": _rms_b,
+            "dif_rms_rel_pct": 100 * np.abs(_rms_b - _rms_a) / _rms_a,
+            "correlacion_muestras": [
+                np.corrcoef(_a[:, _c], _b[:, _c])[0, 1] for _c in range(_a.shape[1])
+            ],
+        }
+    )
+    close_pair_identical = bool(np.array_equal(_a, _b))
+    close_pair
+    return (
+        close_pair,
+        close_pair_files,
+        close_pair_gap,
+        close_pair_identical,
+        close_pair_test,
+    )
+
+
+@app.cell(hide_code=True)
+def _(
+    close_pair,
+    close_pair_files,
+    close_pair_gap,
+    close_pair_identical,
+    close_pair_test,
+    mo,
+):
+    mo.md(f"""
+    **Lectura:** ningún archivo repite el contenido de otro (tabla de hashes). El par más cercano
+    en el tiempo es `{close_pair_files[0]}` → `{close_pair_files[1]}` (test {close_pair_test},
+    {close_pair_gap:.0f} s). Las dos capturas {"son" if close_pair_identical else "no son"}
+    idénticas: el RMS por canal difiere entre
+    {close_pair["dif_rms_rel_pct"].min():.1f}% y {close_pair["dif_rms_rel_pct"].max():.1f}%, y la
+    correlación muestra a muestra es como mucho
+    {close_pair["correlacion_muestras"].max():.2f}. Son dos adquisiciones distintas del mismo
+    estado del banco, no un archivo duplicado; se conservan ambas.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## Longitud de las series: horas de reloj vs. horas de operación
 
     Las horas de operación acumulan cada hueco entre capturas solo hasta la cadencia nominal
@@ -331,12 +485,12 @@ def _(mo):
     mo.md(r"""
     ## Saturación del sistema de adquisición
 
-    Archivos con muestras en el límite de adquisición (|x| ≥ 4.99; los registros saturan en
-    ±4.999). En esas muestras la amplitud real es desconocida. Solo aparecen al final de cada
-    test: 3 archivos del test 1 (9 muestras, desde las 23:13:21 del último día), 2 del test 2
-    (47 muestras, entre las 05:02:39 y las 05:42:39 del último día) y 4 del test 3 (89 muestras,
-    desde las 01:32:55 del último día). Las capturas tardías de los tests 1 y 3 que usa el
-    cuaderno 02 están entre ellas, así que sus picos y su curtosis están recortados.
+    Archivos con muestras en el límite de adquisición (|x| ≥ 4.99; los rieles observados son
+    −5.000 y +4.998). En esas muestras la amplitud real es desconocida. Solo aparecen al final
+    de cada test: 3 archivos del test 1 (9 muestras, desde las 23:13:21 del último día), 2 del
+    test 2 (47 muestras, entre las 05:02:39 y las 05:42:39 del último día) y 4 del test 3
+    (89 muestras, desde las 01:32:55 del último día). Las capturas tardías de los tests 1 y 3 que
+    usa el cuaderno 02 están entre ellas, así que sus picos y su curtosis están recortados.
     """)
     return
 
@@ -454,6 +608,60 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ### Verificación cruzada: criterio de señal plana
+
+    Criterio independiente del anterior: por archivo, la desviación estándar máxima entre canales
+    (`std`, señal sin componente continua) relativa a la mediana de esa misma magnitud en todo el
+    test. Una captura con `std_rel` < 5% se considera plana.
+    """)
+    return
+
+
+@app.cell
+def _(ims, indicators, pd):
+    FLAT_STD_FRACTION = 0.05
+    _max_std = indicators.groupby(["test_id", "file", "timestamp"])["std"].max().reset_index()
+    _max_std["std_rel"] = _max_std["std"] / _max_std.groupby("test_id")["std"].transform("median")
+    _rows = []
+    for _test_id in ims.TEST_REGISTRY:
+        _group = _max_std[_max_std["test_id"] == _test_id]
+        _flat = _group[_group["std_rel"] < FLAT_STD_FRACTION]
+        _rows.append(
+            {
+                "test": _test_id,
+                "capturas_planas": len(_flat),
+                "std_rel_planas": ", ".join(f"{v:.3f}" for v in _flat["std_rel"]),
+                "std_rel_minimo_resto": _group.loc[
+                    _group["std_rel"] >= FLAT_STD_FRACTION, "std_rel"
+                ].min(),
+            }
+        )
+    flat_files = _max_std[_max_std["std_rel"] < FLAT_STD_FRACTION]
+    flat_summary = pd.DataFrame(_rows).set_index("test")
+    flat_summary
+    return flat_files, flat_summary
+
+
+@app.cell(hide_code=True)
+def _(flat_files, flat_summary, mo, post_shutdown):
+    _same = set(flat_files["file"]) == set(post_shutdown["file"])
+    _flat_rel = flat_files["std_rel"]
+    mo.md(f"""
+    **Lectura:** el criterio de señal plana marca **{len(flat_files)}** capturas
+    (test 2: {flat_summary.loc["2", "capturas_planas"]}, test 3:
+    {flat_summary.loc["3", "capturas_planas"]}), con `std_rel` entre {_flat_rel.min():.3f} y
+    {_flat_rel.max():.3f}; la siguiente captura más baja de cada test está en
+    `std_rel` ≥ {flat_summary["std_rel_minimo_resto"].min():.2f}. El conjunto
+    {"coincide exactamente" if _same else "NO coincide"} con las capturas post-apagado de
+    `flag_post_shutdown`, y la separación entre ambos grupos es amplia, así que la exclusión no
+    depende del umbral elegido.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## Conclusiones: criterios de inclusión/exclusión propuestos
     """)
     return
@@ -472,9 +680,10 @@ def _(mo):
     ventanas de tiempo, decidir explícitamente si "horas transcurridas" usa tiempo de reloj (incluye
     inactividad), índice de snapshot (cadencia no uniforme) u horas de operación sin pausas (tabla
     de longitud de las series).
-    4. **No hay archivos corruptos ni timestamps duplicados** en ningún test: 0 errores de lectura,
-    0 valores no finitos, 20480 filas y el número de canales documentado en el 100% de los archivos
-    (columnas de integridad de la tabla resumen).
+    4. **No hay archivos corruptos, timestamps duplicados ni archivos con contenido duplicado** en
+    ningún test: 0 errores de lectura, 0 valores no finitos, 0 hashes SHA-256 repetidos, 20480
+    filas y el número de canales documentado en el 100% de los archivos (columnas de integridad
+    de la tabla resumen). El par de capturas a 13 s no es un duplicado.
     5. **La discrepancia del test 3 se documenta, no se "corrige"**: se preserva el dato crudo
     completo (6324 archivos) y se reporta la discrepancia como hallazgo, dado que no hay evidencia
     de corrupción.

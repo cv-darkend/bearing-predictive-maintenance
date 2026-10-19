@@ -7,6 +7,7 @@ metadata from ``ims.py``.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -17,7 +18,8 @@ import pandas as pd
 from bearing_predictive_maintenance import ims
 
 # Samples at or beyond this magnitude sit at the acquisition limit: the IMS recordings
-# saturate at +/-4.999 (a +/-5 V range), so their true amplitude is unknown.
+# clip at the rails -5.000 and +4.998 (a +/-5 V range), so their true amplitude is
+# unknown. Saturation counts use |x| >= SATURATION_LEVEL.
 SATURATION_LEVEL = 4.99
 
 INVENTORY_COLUMNS = (
@@ -28,6 +30,7 @@ INVENTORY_COLUMNS = (
     "n_cols",
     "n_non_finite",
     "n_saturated",
+    "content_sha256",
     "gap_seconds",
     "elapsed_hours",
     "read_error",
@@ -35,7 +38,11 @@ INVENTORY_COLUMNS = (
 
 
 def _inventory_row(test_id: str, path: Path, timestamp: datetime) -> dict[str, object]:
-    """Build one inventory row for a single snapshot file, never raising on bad data."""
+    """Build one inventory row for a single snapshot file, never raising on bad data.
+
+    ``content_sha256`` is the SHA-256 of the raw file bytes, or an empty string when the
+    file cannot be read.
+    """
     try:
         array = ims.load_snapshot(path)
     except Exception as error:  # noqa: BLE001 - any parse failure must be flagged, not raised
@@ -47,6 +54,7 @@ def _inventory_row(test_id: str, path: Path, timestamp: datetime) -> dict[str, o
             "n_cols": 0,
             "n_non_finite": 0,
             "n_saturated": 0,
+            "content_sha256": "",
             "read_error": str(error),
         }
     return {
@@ -57,6 +65,7 @@ def _inventory_row(test_id: str, path: Path, timestamp: datetime) -> dict[str, o
         "n_cols": array.shape[1] if array.ndim == 2 else 0,
         "n_non_finite": int(np.count_nonzero(~np.isfinite(array))),
         "n_saturated": int(np.count_nonzero(np.abs(array) >= SATURATION_LEVEL)),
+        "content_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "read_error": None,
     }
 
@@ -113,6 +122,7 @@ class InventorySummary:
     channel_count_mismatch_count: int
     saturated_file_count: int
     saturated_value_count: int
+    duplicate_content_count: int
 
 
 def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> InventorySummary:
@@ -127,7 +137,9 @@ def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> Inventor
     NaN or non-numeric, and ``channel_count_mismatch_count`` counts readable files whose
     column count differs from the documented channel map. ``saturated_file_count``/
     ``saturated_value_count`` count files and samples at the acquisition limit
-    (``SATURATION_LEVEL``).
+    (``SATURATION_LEVEL``). ``duplicate_content_count`` counts files whose
+    ``content_sha256`` repeats an earlier file's hash (empty hashes of unreadable files
+    are ignored).
     """
     observed_file_count = len(inventory)
     if observed_file_count == 0:
@@ -153,6 +165,7 @@ def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> Inventor
             channel_count_mismatch_count=0,
             saturated_file_count=0,
             saturated_value_count=0,
+            duplicate_content_count=0,
         )
 
     timestamps = pd.to_datetime(inventory["timestamp"])
@@ -174,6 +187,9 @@ def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> Inventor
     duplicate_count = int(timestamps.duplicated().sum())
     readable = inventory["read_error"].isna()
     channel_mismatches = int((readable & (inventory["n_cols"] != len(spec.channel_map))).sum())
+    hashes = inventory["content_sha256"].fillna("")
+    hashes = hashes[hashes != ""]
+    duplicate_content = int(hashes.duplicated().sum())
 
     return InventorySummary(
         test_id=spec.test_id,
@@ -197,4 +213,5 @@ def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> Inventor
         channel_count_mismatch_count=channel_mismatches,
         saturated_file_count=int((inventory["n_saturated"] > 0).sum()),
         saturated_value_count=int(inventory["n_saturated"].sum()),
+        duplicate_content_count=duplicate_content,
     )

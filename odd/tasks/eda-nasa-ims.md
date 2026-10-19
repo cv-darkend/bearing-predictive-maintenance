@@ -82,6 +82,14 @@ Route: all inline (no Writer trigger: units are sequential and depend on T8's re
   fixed); update the Phase II section of the Google Doc copy of "Proyecto V1" PENDING (blocked:
   no Google Doc copy in Drive yet, Google Docs connector not enabled).
 
+- [ ] T14 — Integrate the teammate's valid Phase II findings (origin/eda-santiago, ca030c1) into
+  our format, not his notebooks (Log L8-L9): short intervals < 240 s (test 1: 9, test 3: 2); the
+  13 s pair "posible duplicado" check; content-hash duplicate check over all files (inventory);
+  explicit flat-signal criterion as a cross-check of post-shutdown flags; x/y axis correlation
+  (Spearman) for RMS, kurtosis and crest factor (axis redundancy holds for RMS only); the a-priori
+  2-8 kHz envelope band as a leakage-free option; fix rail wording (-5.000/+4.998, not ±4.999).
+  Route: delegated (context backstop).
+
 ## Acceptance criteria
 
 - `make check` passes.
@@ -336,3 +344,9 @@ Next phase (out of scope here): CRISP-DM Phase III (feature matrix, windowing, l
   R2-002 kurtosis 8 / 72 h / 150 h literals; R2-003/R3-002 hardcoded numbers in markdown (F7);
   R2-004 fault_peak docstring "2.2%"; R3-001 summarize_inventory KeyError on stale inventory
   without n_saturated; R3-003 SATURATION_LEVEL 4.99 vs ±4.999 boundary untested.
+- L8 (2026-10-19) — User: "Hay que revisar lo que el obtuvo y si cuadra." data-auditor compared
+  origin/eda-santiago with raw data and our reports: his tables reproduce; wrong conclusions (test 3
+  lead time reversed, "siempre el primero", leaky provisional labels, RMS with DC, kurtosis max).
+- L9 (2026-10-19) — User: "Incluso si alo no integrar como tal sus notebooks si no integrar lo util
+  en los nuetsros para mantener un formato." Delivery (earlier): "stack a main pero usando merge
+  foreward". T14 added; lands on feat/eda-nasa-ims, then merged forward into feat/data-preparation.

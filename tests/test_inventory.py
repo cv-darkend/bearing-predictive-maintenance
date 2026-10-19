@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 from pathlib import Path
 
@@ -167,3 +168,66 @@ def test_inventory_counts_samples_at_the_acquisition_limit(tmp_path: Path) -> No
     assert list(inv["n_saturated"]) == [0, 2]
     assert summary.saturated_file_count == 1
     assert summary.saturated_value_count == 2
+
+
+def test_inventory_hashes_file_content_and_counts_duplicates(tmp_path: Path) -> None:
+    test_dir = tmp_path / "2nd_test" / "2nd_test"
+    test_dir.mkdir(parents=True)
+    rows = [["0.1", "0.2", "0.3", "0.4"]] * 3
+    _write_snapshot(test_dir / "2004.02.12.10.32.39", rows)
+    _write_snapshot(test_dir / "2004.02.12.10.42.39", [["0.5", "0.2", "0.3", "0.4"]] * 3)
+    # same bytes as the first file under a different name
+    _write_snapshot(test_dir / "2004.02.12.10.52.39", rows)
+    inv = inventory.build_inventory(tmp_path, "2")
+
+    summary = inventory.summarize_inventory(inv, ims.TEST_REGISTRY["2"])
+
+    expected = hashlib.sha256((test_dir / "2004.02.12.10.32.39").read_bytes()).hexdigest()
+    assert inv["content_sha256"].iloc[0] == expected
+    assert inv["content_sha256"].iloc[2] == expected
+    assert inv["content_sha256"].iloc[1] != expected
+    assert summary.duplicate_content_count == 1
+
+
+def test_inventory_reports_no_content_duplicates_for_distinct_files(tmp_path: Path) -> None:
+    test_dir = tmp_path / "2nd_test" / "2nd_test"
+    test_dir.mkdir(parents=True)
+    _write_snapshot(test_dir / "2004.02.12.10.32.39", [["0.1", "0.2", "0.3", "0.4"]] * 3)
+    _write_snapshot(test_dir / "2004.02.12.10.42.39", [["0.2", "0.2", "0.3", "0.4"]] * 3)
+    inv = inventory.build_inventory(tmp_path, "2")
+
+    summary = inventory.summarize_inventory(inv, ims.TEST_REGISTRY["2"])
+
+    assert inv["content_sha256"].str.len().eq(64).all()
+    assert summary.duplicate_content_count == 0
+
+
+def test_inventory_unreadable_files_get_empty_hash_and_are_not_duplicates(
+    tmp_path: Path,
+) -> None:
+    test_dir = tmp_path / "2nd_test" / "2nd_test"
+    test_dir.mkdir(parents=True)
+    _write_snapshot(test_dir / "2004.02.12.10.32.39", [["0.1", "0.2", "0.3", "0.4"]])
+    (test_dir / "2004.02.12.10.42.39").write_bytes(b"")
+    (test_dir / "2004.02.12.10.52.39").write_bytes(b"")
+    inv = inventory.build_inventory(tmp_path, "2")
+
+    summary = inventory.summarize_inventory(inv, ims.TEST_REGISTRY["2"])
+
+    assert list(inv["content_sha256"].iloc[1:]) == ["", ""]
+    assert summary.read_error_count == 2
+    assert summary.duplicate_content_count == 0
+
+
+def test_inventory_columns_place_content_hash_after_saturation_count() -> None:
+    columns = list(inventory.INVENTORY_COLUMNS)
+
+    assert columns.index("content_sha256") == columns.index("n_saturated") + 1
+
+
+def test_summarize_empty_inventory_reports_no_content_duplicates() -> None:
+    empty = pd.DataFrame(columns=list(inventory.INVENTORY_COLUMNS))
+
+    summary = inventory.summarize_inventory(empty, ims.TEST_REGISTRY["2"])
+
+    assert summary.duplicate_content_count == 0
