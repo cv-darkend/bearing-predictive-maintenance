@@ -75,8 +75,13 @@ def test_build_inventory_flags_unreadable_file_without_raising(tmp_path: Path) -
     result = inventory.build_inventory(tmp_path, "2")
 
     broken_row = result[result["file"] == "2004.02.12.10.42.39"].iloc[0]
-    assert broken_row["read_error"] is not None
+    good_row = result[result["file"] == "2004.02.12.10.32.39"].iloc[0]
+    assert isinstance(broken_row["read_error"], str) and broken_row["read_error"]
+    assert pd.isna(good_row["read_error"])
     assert broken_row["n_rows"] == 0
+
+    summary = inventory.summarize_inventory(result, ims.TEST_REGISTRY["2"])
+    assert summary.read_error_count == 1
 
 
 def test_summarize_inventory_compares_documented_and_observed(synthetic_test2_dir: Path) -> None:
@@ -107,3 +112,40 @@ def test_summarize_inventory_counts_duplicate_timestamps(synthetic_test2_dir: Pa
     summary = inventory.summarize_inventory(duplicated, spec)
 
     assert summary.duplicate_timestamp_count == 1
+
+
+def test_summarize_inventory_reports_integrity_counts(synthetic_test2_dir: Path) -> None:
+    test_dir = synthetic_test2_dir / "2nd_test" / "2nd_test"
+    # a readable file with the wrong channel count (3 instead of the documented 4)
+    _write_snapshot(test_dir / "2004.02.12.11.12.39", [["0.1", "0.2", "0.3"] for _ in range(3)])
+    inv = inventory.build_inventory(synthetic_test2_dir, "2")
+
+    summary = inventory.summarize_inventory(inv, ims.TEST_REGISTRY["2"])
+
+    assert summary.read_error_count == 0
+    assert summary.non_finite_file_count == 1
+    assert summary.non_finite_value_count == 1
+    assert summary.channel_count_mismatch_count == 1
+    assert summary.rows_per_file_consistent is False
+
+
+def test_summarize_inventory_counts_gaps_over_threshold(tmp_path: Path) -> None:
+    test_dir = tmp_path / "2nd_test" / "2nd_test"
+    test_dir.mkdir(parents=True)
+    row = [["0.1", "0.2", "0.3", "0.4"]]
+    for name in (
+        "2004.02.12.10.00.00",
+        "2004.02.12.10.10.00",
+        "2004.02.12.10.20.00",
+        "2004.02.12.11.20.00",
+        "2004.02.12.11.30.00",
+    ):
+        _write_snapshot(test_dir / name, row)
+    inv = inventory.build_inventory(tmp_path, "2")
+
+    summary = inventory.summarize_inventory(inv, ims.TEST_REGISTRY["2"])
+
+    # gaps: 600, 600, 3600, 600 -> median 600, one gap above 1.5x median
+    assert summary.median_gap_seconds == pytest.approx(600.0)
+    assert summary.gaps_over_1_5x_median == 1
+    assert summary.rows_per_file_consistent is True

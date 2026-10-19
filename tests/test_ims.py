@@ -124,3 +124,21 @@ def test_characteristic_fault_frequencies_match_documented_values() -> None:
     assert frequencies.bpfo == pytest.approx(236.4, abs=0.5)
     assert frequencies.bpfi == pytest.approx(296.9, abs=0.5)
     assert frequencies.bsf == pytest.approx(139.9, abs=0.5)
+
+
+def test_registry_documents_failures_dates_and_test3_layout() -> None:
+    failures = {
+        test_id: {(f.bearing, f.description) for f in spec.documented_failures}
+        for test_id, spec in ims.TEST_REGISTRY.items()
+    }
+    assert failures == {
+        "1": {(3, "inner race defect"), (4, "roller element defect")},
+        "2": {(1, "outer race failure")},
+        "3": {(3, "outer race failure")},
+    }
+    assert ims.TEST_REGISTRY["1"].documented_start == datetime(2003, 10, 22, 12, 6, 24)
+    assert ims.TEST_REGISTRY["1"].documented_end == datetime(2003, 11, 25, 23, 39, 56)
+    assert ims.TEST_REGISTRY["3"].documented_start == datetime(2004, 3, 4, 9, 27, 46)
+    assert ims.TEST_REGISTRY["3"].documented_end == datetime(2004, 4, 4, 19, 1, 57)
+    test3 = {m.channel: (m.bearing, m.axis) for m in ims.TEST_REGISTRY["3"].channel_map}
+    assert test3 == {1: (1, "single"), 2: (2, "single"), 3: (3, "single"), 4: (4, "single")}

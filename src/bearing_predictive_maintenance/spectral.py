@@ -92,15 +92,44 @@ def band_amplitude(freqs: np.ndarray, amps: np.ndarray, target: float, tolerance
     return float(np.max(amps[mask]))
 
 
+def fault_peak(
+    freqs: np.ndarray, amps: np.ndarray, target: float, rel_tolerance: float
+) -> tuple[float, float]:
+    """Return ``(frequency, amplitude)`` of the largest peak near ``target``.
+
+    The search window is ``target * (1 +/- rel_tolerance)``.
+
+    Characteristic fault frequencies are kinematic estimates: bearing slip, shaft-speed
+    deviation, and the dataset's sampling-rate ambiguity (20480 samples documented as
+    one second at 20 kHz) shift the observed line by a few percent. In the NASA IMS
+    outer-race failures the envelope peak sits about 2.2% below the computed BPFO, so a
+    window proportional to the target is used instead of a fixed width in Hz. Returning
+    the observed frequency keeps that shift visible.
+
+    Returns ``(nan, nan)`` when no frequency bin falls inside the window.
+    """
+    if not 0.0 < rel_tolerance < 1.0:
+        raise ValueError(f"rel_tolerance must be in (0, 1), got {rel_tolerance}.")
+    freqs = np.asarray(freqs, dtype=np.float64)
+    amps = np.asarray(amps, dtype=np.float64)
+    mask = np.abs(freqs - target) <= rel_tolerance * target
+    if not np.any(mask):
+        return float("nan"), float("nan")
+    index = int(np.argmax(np.where(mask, amps, -np.inf)))
+    return float(freqs[index]), float(amps[index])
+
+
 def detect_onset(
     series: pd.Series, baseline_n: int, n_sigma: float, persistence: int
 ) -> int | None:
     """Exploratory degradation-onset detector: first index sustained above threshold.
 
-    Computes a baseline mean/std from the first ``baseline_n`` points, then returns
-    the first index ``i`` such that ``series[i:i + persistence]`` are all above
-    ``baseline_mean + n_sigma * baseline_std``. Returns ``None`` when no such run
-    exists.
+    Computes a baseline mean/std from the first ``baseline_n`` points (ignoring NaN),
+    then returns the first index ``i >= baseline_n`` such that
+    ``series[i:i + persistence]`` are all above ``baseline_mean + n_sigma *
+    baseline_std``. The search starts after the baseline window, so a run-in transient
+    inside the baseline can never be reported as degradation onset. NaN points never
+    count as above the threshold. Returns ``None`` when no such run exists.
 
     This is a deliberately simple, exploratory rule to get a first estimate of "when
     does this indicator start departing from its healthy baseline" for a single
@@ -108,17 +137,23 @@ def detect_onset(
     methodology for modeling: a production label would likely combine multiple
     indicators, validate thresholds, and consider domain-specific onset criteria.
     """
+    if baseline_n <= 0 or persistence <= 0:
+        raise ValueError(
+            f"baseline_n and persistence must be positive, got {baseline_n} and {persistence}."
+        )
     values = series.to_numpy(dtype=np.float64)
     if len(values) < baseline_n:
         return None
 
     baseline = values[:baseline_n]
-    threshold = baseline.mean() + n_sigma * baseline.std(ddof=0)
+    if not np.any(np.isfinite(baseline)):
+        return None
+    threshold = np.nanmean(baseline) + n_sigma * np.nanstd(baseline, ddof=0)
     above = values > threshold
 
     run_length = 0
-    for index, is_above in enumerate(above):
-        run_length = run_length + 1 if is_above else 0
+    for index in range(baseline_n, len(values)):
+        run_length = run_length + 1 if above[index] else 0
         if run_length >= persistence:
             return index - persistence + 1
     return None
@@ -134,10 +169,12 @@ def flag_post_shutdown(
     baseline is taken from the first ``baseline_n`` snapshots (early in the test,
     while the rig is known to be running), so a near-zero-amplitude tail snapshot
     (rig already stopped before the recording finished) is flagged without relying
-    on a hardcoded absolute threshold.
+    on a hardcoded absolute threshold. NaN values (no valid recording) are always
+    flagged, and they are ignored when computing the baseline median.
     """
     values = max_channel_rms.to_numpy(dtype=np.float64)
-    baseline_median = float(np.median(values[:baseline_n])) if len(values) else 0.0
+    baseline = values[:baseline_n]
+    baseline_median = float(np.nanmedian(baseline)) if np.any(np.isfinite(baseline)) else 0.0
     threshold = fraction_of_baseline_median * baseline_median
-    flags = values < threshold
+    flags = np.isnan(values) | (values < threshold)
     return pd.Series(flags, index=max_channel_rms.index)

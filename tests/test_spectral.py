@@ -94,6 +94,39 @@ def test_band_amplitude_returns_nan_when_nothing_in_tolerance() -> None:
     assert math.isnan(result)
 
 
+def test_fault_peak_finds_peak_shifted_by_bearing_slip() -> None:
+    freqs = np.linspace(0.0, 1000.0, 4001)
+    amps = np.full_like(freqs, 0.001)
+    # Observed outer-race peak sits ~2.2% below the kinematic BPFO (231.2 vs 236.4 Hz),
+    # outside a fixed +/-5 Hz window but within a 3% relative tolerance.
+    observed_index = int(np.argmin(np.abs(freqs - 231.2)))
+    amps[observed_index] = 0.2
+
+    peak_freq, peak_amp = spectral.fault_peak(freqs, amps, target=236.4, rel_tolerance=0.03)
+
+    assert peak_freq == pytest.approx(freqs[observed_index])
+    assert peak_amp == pytest.approx(0.2)
+    # The fixed +/-5 Hz window misses the peak and reads only the floor.
+    assert spectral.band_amplitude(freqs, amps, target=236.4, tolerance=5.0) == pytest.approx(0.001)
+
+
+def test_fault_peak_returns_nan_pair_when_no_bin_in_window() -> None:
+    freqs = np.linspace(0.0, 100.0, 101)
+    amps = np.ones_like(freqs)
+
+    peak_freq, peak_amp = spectral.fault_peak(freqs, amps, target=5000.0, rel_tolerance=0.03)
+
+    assert math.isnan(peak_freq)
+    assert math.isnan(peak_amp)
+
+
+@pytest.mark.parametrize("rel_tolerance", [0.0, -0.1, 1.0])
+def test_fault_peak_rejects_invalid_tolerance(rel_tolerance: float) -> None:
+    freqs = np.linspace(0.0, 1000.0, 2001)
+    with pytest.raises(ValueError, match="rel_tolerance"):
+        spectral.fault_peak(freqs, np.ones_like(freqs), target=236.4, rel_tolerance=rel_tolerance)
+
+
 def test_detect_onset_finds_first_persistent_excursion() -> None:
     baseline_n = 50
     persistence = 5
@@ -163,3 +196,44 @@ def test_flag_post_shutdown_keeps_normal_snapshots_unflagged() -> None:
     )
 
     assert list(flags) == [False, False, False, False]
+
+
+def test_detect_onset_ignores_excursions_inside_the_baseline_window() -> None:
+    baseline_n = 50
+    values = np.random.default_rng(3).normal(loc=0.0, scale=1.0, size=baseline_n + 30)
+    values[:3] = 12.0  # run-in transient inside the baseline window
+    values[baseline_n + 10 :] = 40.0  # real, sustained degradation after the baseline
+
+    onset_index = spectral.detect_onset(
+        pd.Series(values), baseline_n=baseline_n, n_sigma=3.0, persistence=3
+    )
+
+    assert onset_index == baseline_n + 10
+
+
+def test_detect_onset_ignores_nan_in_baseline() -> None:
+    baseline_n = 50
+    values = np.concatenate([np.random.default_rng(4).normal(size=baseline_n), np.full(20, 30.0)])
+    values[7] = np.nan
+
+    onset_index = spectral.detect_onset(
+        pd.Series(values), baseline_n=baseline_n, n_sigma=3.0, persistence=5
+    )
+
+    assert onset_index == baseline_n
+
+
+@pytest.mark.parametrize(("baseline_n", "persistence"), [(0, 5), (-1, 5), (10, 0), (10, -2)])
+def test_detect_onset_rejects_non_positive_parameters(baseline_n: int, persistence: int) -> None:
+    series = pd.Series(np.arange(100, dtype=float))
+    with pytest.raises(ValueError, match="must be positive"):
+        spectral.detect_onset(series, baseline_n=baseline_n, n_sigma=3.0, persistence=persistence)
+
+
+def test_flag_post_shutdown_flags_nan_and_tolerates_nan_in_baseline() -> None:
+    max_rms = pd.Series([0.05, np.nan, 0.055, 0.058, 0.06, np.nan, 0.001])
+
+    flags = spectral.flag_post_shutdown(max_rms, baseline_n=4, fraction_of_baseline_median=0.1)
+
+    # A NaN snapshot carries no valid recording, so it can never be the "last valid" one.
+    assert list(flags) == [False, True, False, False, False, True, True]

@@ -100,6 +100,10 @@ class InventorySummary:
     gaps_over_1_5x_median: int
     max_gap_seconds: float | None
     duplicate_timestamp_count: int
+    read_error_count: int
+    non_finite_file_count: int
+    non_finite_value_count: int
+    channel_count_mismatch_count: int
 
 
 def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> InventorySummary:
@@ -108,6 +112,11 @@ def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> Inventor
     Cadence gaps are computed relative to the inventory's own observed median gap
     (never a hardcoded cadence), so the "greater than 1.5x median" threshold adapts to
     each test's documented cadence.
+
+    Integrity counts: ``read_error_count`` counts files that could not be parsed,
+    ``non_finite_file_count``/``non_finite_value_count`` count files and values that are
+    NaN or non-numeric, and ``channel_count_mismatch_count`` counts readable files whose
+    column count differs from the documented channel map.
     """
     observed_file_count = len(inventory)
     if observed_file_count == 0:
@@ -127,6 +136,10 @@ def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> Inventor
             gaps_over_1_5x_median=0,
             max_gap_seconds=None,
             duplicate_timestamp_count=0,
+            read_error_count=0,
+            non_finite_file_count=0,
+            non_finite_value_count=0,
+            channel_count_mismatch_count=0,
         )
 
     timestamps = pd.to_datetime(inventory["timestamp"])
@@ -146,6 +159,8 @@ def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> Inventor
         int((gaps > 1.5 * median_gap).sum()) if median_gap is not None and median_gap > 0 else 0
     )
     duplicate_count = int(timestamps.duplicated().sum())
+    readable = inventory["read_error"].isna()
+    channel_mismatches = int((readable & (inventory["n_cols"] != len(spec.channel_map))).sum())
 
     return InventorySummary(
         test_id=spec.test_id,
@@ -163,4 +178,8 @@ def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> Inventor
         gaps_over_1_5x_median=gaps_over_threshold,
         max_gap_seconds=max_gap,
         duplicate_timestamp_count=duplicate_count,
+        read_error_count=int((~readable).sum()),
+        non_finite_file_count=int((inventory["n_non_finite"] > 0).sum()),
+        non_finite_value_count=int(inventory["n_non_finite"].sum()),
+        channel_count_mismatch_count=channel_mismatches,
     )

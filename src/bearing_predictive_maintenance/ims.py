@@ -4,7 +4,10 @@ The dataset ships as three run-to-failure "tests", each a directory of tab-separ
 snapshot files named after the timestamp at which they were recorded
 (``YYYY.MM.DD.HH.MM.SS``, no extension). This module encodes the documented metadata
 from the NASA IMS readme (test layout, channel-to-bearing mapping, documented failures,
-bearing geometry) and provides the primitives to parse snapshot timestamps, enumerate a
+sampling rate, shaft speed, load) and the Rexnord ZA-2115 bearing geometry, which the
+readme does not give (taken from Qiu et al., 2006, "Wavelet filter-based weak signature
+detection method and its application on rolling element bearing prognostics", Journal of
+Sound and Vibration 289), and provides the primitives to parse snapshot timestamps, enumerate a
 test's snapshots, and load one snapshot as an array.
 
 Documented values (from the NASA IMS readme) are recorded as *documented*, never as
@@ -24,6 +27,11 @@ import pandas as pd
 
 SNAPSHOT_TIMESTAMP_FORMAT = "%Y.%m.%d.%H.%M.%S"
 
+# The readme documents 20 kHz and 20480 points per "1-second" snapshot, which is
+# internally inconsistent (20480 / 20000 = 1.024 s). 20 kHz is kept: observed fault
+# lines sit 1-2% below the kinematic frequencies (consistent with bearing slip) for the
+# inner race at 20 kHz, while the outer-race lines would match better at 20.48 kHz. See
+# ``spectral.fault_peak`` for how the analysis stays robust to this ambiguity.
 SAMPLING_RATE_HZ = 20_000.0
 SHAFT_SPEED_RPM = 2000.0
 RADIAL_LOAD_LBF = 6000.0
@@ -126,7 +134,7 @@ class TestSpec:
     documented_failures: tuple[BearingFailure, ...]
 
 
-def _bearing_bidirectional_map(test_id: str, raw_relative_path: str) -> tuple[ChannelMapping, ...]:
+def _bearing_bidirectional_map() -> tuple[ChannelMapping, ...]:
     """Build the 8-channel map for a test where each bearing has an x and a y channel."""
     mapping = []
     channel = 1
@@ -148,7 +156,7 @@ TEST_REGISTRY: dict[str, TestSpec] = {
     "1": TestSpec(
         test_id="1",
         raw_relative_path=Path("1st_test/1st_test"),
-        channel_map=_bearing_bidirectional_map("1", "1st_test/1st_test"),
+        channel_map=_bearing_bidirectional_map(),
         documented_file_count=2156,
         documented_start=datetime(2003, 10, 22, 12, 6, 24),
         documented_end=datetime(2003, 11, 25, 23, 39, 56),
