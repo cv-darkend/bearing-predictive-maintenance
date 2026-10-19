@@ -20,6 +20,12 @@ htmlcov/
 # Jupyter
 .ipynb_checkpoints/
 
+# marimo
+__marimo__/
+
+# Generated notebook exports (make notebooks)
+build/
+
 # Secrets and local environment
 .env
 .env.*
