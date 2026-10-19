@@ -110,6 +110,10 @@ def _(ims, inventory, pd, summarize_inventory):
                 "gap_max_s": summary.max_gap_seconds,
                 "gaps_sobre_1.5x_mediana": summary.gaps_over_1_5x_median,
                 "timestamps_duplicados": summary.duplicate_timestamp_count,
+                "errores_lectura": summary.read_error_count,
+                "archivos_con_no_finitos": summary.non_finite_file_count,
+                "valores_no_finitos": summary.non_finite_value_count,
+                "archivos_canales_distintos": summary.channel_count_mismatch_count,
             }
         )
     summary_table = pd.DataFrame(summary_rows).set_index("test")
@@ -120,10 +124,17 @@ def _(ims, inventory, pd, summarize_inventory):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **Lectura de la tabla:** los tres tests coinciden en filas por archivo (20480, 1 s a 20 kHz) y
-    no presentan timestamps duplicados. Los tests 1 y 2 coinciden exactamente con la documentación
-    de NASA en conteo de archivos e inicio/fin. El test 3 no: ver la sección de discrepancia más
-    abajo.
+    **Lectura de la tabla:** en los tres tests todos los archivos tienen 20480 filas, ninguno falla
+    al leerse (`errores_lectura` = 0), ninguno contiene valores no numéricos o no finitos
+    (`valores_no_finitos` = 0), todos tienen el número de columnas que documenta el mapa de canales
+    (`archivos_canales_distintos` = 0) y no hay timestamps duplicados. Los tests 1 y 2 coinciden
+    exactamente con la documentación de NASA en conteo de archivos e inicio/fin. El test 3 no: ver
+    la sección de discrepancia más abajo.
+
+    **Frecuencia de muestreo:** el `readme` de NASA describe cada archivo como una captura de
+    "1 segundo" de 20480 puntos a 20 kHz, lo que es internamente inconsistente (20480 / 20000 =
+    1.024 s). Se conserva 20 kHz, el valor documentado; el cuaderno 02 muestra cómo esta
+    ambigüedad afecta la lectura de las frecuencias características.
     """)
     return
 
@@ -237,13 +248,45 @@ def _(FIGURES_DIR, ims, inventory, plt):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **Test 1** muestra huecos grandes recurrentes (pausas de fin de semana/operación): el mayor es
-    de ≈6.2 días (~534 000 s) alrededor del 2003-10-29, más otros de ≈4.0 y ≈3.8 días; 24 huecos
+    **Test 1** muestra huecos grandes recurrentes (pausas de operación): el mayor es de ≈6.2 días
+    (~534 000 s), entre el 2003-10-23 y el 2003-10-29, más otros de ≈4.0 y ≈3.8 días; 24 huecos
     superan 1.5× la mediana (600 s). **Test 2** es perfectamente regular (ningún hueco supera el
     umbral). **Test 3** tiene 4 huecos por encima del umbral, el mayor de ≈7.5 horas. Implicación:
     cualquier variable de "horas transcurridas" en test 1 mezcla tiempo de operación real con tiempo
-    de inactividad del banco; para modelar degradación puede ser preferible usar el índice de
-    snapshot (orden secuencial) en vez del tiempo de reloj, o documentar explícitamente esta mezcla.
+    de inactividad del banco. La cadencia tampoco es uniforme dentro de la operación (tabla
+    siguiente), por lo que el índice de snapshot tampoco equivale a tiempo de operación.
+    """)
+    return
+
+
+@app.cell
+def _(inventory, pd):
+    # Runs of consecutive snapshots taken at a 5-minute cadence instead of the usual 10.
+    _rows = []
+    for _test_id, _group in inventory.sort_values("timestamp").groupby("test_id"):
+        _short = (_group["gap_seconds"] - 300).abs() <= 30
+        _run_id = (_short != _short.shift()).cumsum()
+        for _, _run in _group[_short].groupby(_run_id[_short]):
+            _rows.append(
+                {
+                    "test": _test_id,
+                    "inicio": _run["timestamp"].iloc[0],
+                    "fin": _run["timestamp"].iloc[-1],
+                    "huecos_de_300s": len(_run),
+                }
+            )
+    cadence_runs = pd.DataFrame(_rows, columns=["test", "inicio", "fin", "huecos_de_300s"])
+    cadence_runs
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    El `readme` documenta que en el test 1 solo los primeros 43 archivos se tomaron cada 5 minutos.
+    Los datos muestran además una segunda ráfaga a 5 minutos el 2003-11-20 (tabla anterior). Un
+    eje temporal basado en el índice de snapshot contaría esas capturas como si representaran el
+    doble de tiempo de operación.
     """)
     return
 
@@ -271,6 +314,12 @@ def _(ims, inventory, pd, summarize_inventory):
                     test3_summary.observed_end - test3_summary.documented_end
                 ).total_seconds()
                 / 86400,
+                "archivos_hasta_fin_documentado": int(
+                    (
+                        inventory.loc[inventory["test_id"] == "3", "timestamp"]
+                        <= test3_summary.documented_end
+                    ).sum()
+                ),
             }
         ]
     )
@@ -282,12 +331,14 @@ def _(mo):
     mo.md(r"""
     El directorio crudo del test 3 contiene **6324** archivos, no los 4448 que documenta el `readme`
     de NASA, y termina el **2004-04-18 02:42:55**, ~13.3 días después del fin documentado
-    (2004-04-04 19:01:57). El inicio sí coincide. La cadencia (600 s) y la ausencia de duplicados se
-    mantienen consistentes en todo el rango observado, por lo que no parece un archivo corrupto o
-    mezclado con otro test: el `readme` probablemente documenta una versión truncada de la
-    publicación. Esto importa para el labeling: la sección de capturas posteriores al apagado (más
-    abajo) sugiere que la falla real ocurre cerca del final de la grabación **extendida**, no en la
-    fecha documentada.
+    (2004-04-04 19:01:57). El inicio sí coincide, y exactamente 4448 archivos caen en o antes del
+    fin documentado, el mismo número que documenta el `readme`. La cadencia (600 s) y la ausencia
+    de duplicados se mantienen en todo el rango observado. La hipótesis más simple es que el
+    `readme` describe una versión truncada de la publicación; no se puede confirmar con los datos.
+    La copia usada proviene del espejo de Kaggle (`vinayak123tyagi/bearing-dataset`), donde el test
+    3 está en la carpeta `3rd_test/4th_test/txt`. Esto importa para el etiquetado: la sección de
+    capturas posteriores al apagado (más abajo) sugiere que la grabación termina con el banco
+    detenido al final del rango **extendido**, no en la fecha documentada.
     """)
     return
 
@@ -362,9 +413,9 @@ def _(mo):
     ventanas de tiempo, decidir explícitamente si "horas transcurridas" usa tiempo de reloj (incluye
     inactividad) o índice secuencial de snapshot (solo operación); ambos se usan en la sección de
     tendencias del cuaderno 02.
-    4. **No hay archivos corruptos ni timestamps duplicados** en ningún test: las 20480 filas por
-    archivo son consistentes en el 100% de los casos observados (ver `filas_consistentes` en la
-    tabla resumen).
+    4. **No hay archivos corruptos ni timestamps duplicados** en ningún test: 0 errores de lectura,
+    0 valores no finitos, 20480 filas y el número de canales documentado en el 100% de los archivos
+    (columnas de integridad de la tabla resumen).
     5. **La discrepancia del test 3 se documenta, no se "corrige"**: se preserva el dato crudo
     completo (6324 archivos) y se reporta la discrepancia como hallazgo, dado que no hay evidencia
     de corrupción.

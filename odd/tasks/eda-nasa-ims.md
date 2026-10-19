@@ -54,6 +54,33 @@ Test 3 file count/end date appear to differ from NASA documentation (4448 files,
 - [x] T6 — Findings report `reports/eda_nasa_ims.md`: facts, anomalies, inclusion/exclusion criteria, implications for labeling, windowing, and splitting.
 - [x] T7 — Migrate notebooks to marimo (user decision 2026-09-17): `notebooks/01_data_inventory.py` and `notebooks/02_signal_exploration.py` as the source of truth (no stored outputs); remove the `.ipynb` sources; add `marimo` dependency; `make notebooks` exports `.ipynb` (with outputs) and `.html` to a git-ignored location; report references updated. Reason: `.ipynb` with embedded base64 figures (1.8 MB) exceeded the native reviewer context (~1.9M tokens vs 1M limit).
 
+### Phase II corrections (reopened 2026-10-18 after full review, see Log L2-L4)
+
+Route: all inline (no Writer trigger: units are sequential and depend on T8's regenerated CSV).
+
+- [x] T8 — Amplitude indicators on the mean-removed signal (RMS, peak, peak-to-peak, energy,
+  crest/impulse/shape factor); keep `mean` as the DC level. Tests first: an offset sine gives
+  `rms == std`; Pearson kurtosis of a sine is 1.5; skewness/kurtosis NaN on constant signal.
+  Regenerate `data/interim/ims_snapshot_indicators.csv`.
+- [x] T9 — Fault-frequency evidence: measure the shaft line and the outer-race peak in the same
+  spectra to separate bearing slip from a sampling-rate/speed deviation (20480 samples vs
+  "1 s at 20 kHz"); replace the fixed ±5 Hz read with a documented peak search; check 2×BSF
+  for test 1 bearing 4. Tests first for the peak search.
+- [x] T10 — Notebook evidence: integrity counts (non-finite, read errors, column count vs
+  channel map) in notebook 01; temporal autocorrelation of indicators and within-snapshot
+  segment stability in notebook 02; onset table in hours from the last valid capture.
+- [x] T11 — Report corrections in `reports/eda_nasa_ims.md`: BPFO peak statement, test 1
+  bearing 4 kurtosis episode, BSF growth (~2×), last-24 h pauses, test 3 raw spectrum, test 2
+  growth timing, redundancy groups, leakage argument (temporal autocorrelation; bands and
+  thresholds chosen on full series must be fitted on training folds), segment stability,
+  geometry source (Qiu et al. 2006), 4448-files evidence, 5-min cadence runs, Kaggle source.
+- [x] T12 — Edge-case hardening + tests: `detect_onset` searches after the baseline and
+  validates parameters (F4); NaN handling in `detect_onset`/`flag_post_shutdown` (F3);
+  `summarize_inventory` exposes read-error/non-finite counts (F1); unused params removed;
+  inventory/registry assertions the review found missing.
+- [ ] T13 — Re-audit with `data-auditor` (claims) and `make check`; then update the Phase II
+  section of the Google Doc copy of "Proyecto V1" (blocked: Google Docs connector).
+
 ## Acceptance criteria
 
 - `make check` passes.
@@ -263,3 +290,29 @@ findings. Delivery (commit/push) remains a separate user decision.
 - [ ] F7 (R3-007) — derive notebook markdown numbers from computed values (f-strings/asserts).
 
 Next phase (out of scope here): CRISP-DM Phase III (feature matrix, windowing, labels).
+
+## Log
+
+- L1 (2026-09-17) — Original request: CRISP-DM Phase II EDA of NASA IMS (see Scope).
+- L2 (2026-10-18) — User: "Es el proyecto v1 la idea seria sacar las Fases 2 y 3 Hoy."
+- L3 (2026-10-18) — User: "Vamos a trabajar sobre la copia, quiero que antes de que demos por
+  termianda la Fase 2 le hagas un review completo para ver si esta bien."
+  Review (3 read-only agents: claims, code, coverage vs "Proyecto V1"): make check green,
+  inventory/gap/imbalance/onset numbers reproduce. Blockers: amplitude indicators not
+  mean-removed (test 1 DC offset ≈ -0.115 g ≈ std; RMS trend +54% vs std +104% on ch7);
+  outer-race envelope peak at 230.5-231.4 Hz vs BPFO 236.4 (ratio ≈ 20480/20000, unresolved);
+  report errors (bearing 4 kurtosis episode, BSF ~2× not 3-4×, pauses in last 24 h not 13 h,
+  test 3 raw spectrum <60 Hz); integrity counts not shown; leakage argument uses feature
+  correlation; segment stability missing; no CWRU evidence in repo (open product decision).
+- L4 (2026-10-18) — User: "Sí, déjalo así y arranca con las correcciones". Baseline committed
+  on `feat/eda-nasa-ims`: 0a010f8 (code), 75f1a45 (notebooks/report), e9653c1 (data-auditor).
+  Review assess base 3ca6647 committed-only → medium, review_due false (under_budget).
+- L5 (2026-10-18) — T8 36a60fd (RED: offset sine rms 3.32 vs 1.41; GREEN 9 passed; CSV
+  regenerated, centered stats unchanged, rms==std, t1 ch7 RMS +107%). T9+T12 fe86a59 (RED 5 +7
+  failing; GREEN 24 spectral, 7 inventory, 10 ims). T9 finding: all observed fault lines 1-3%
+  below kinematic (BPFO -2.1/-2.5%, BPFI -1.0%, BSF -1.6%), consistent with slip at 20 kHz;
+  20.48 kHz would fit BPFO (+0.3%) but not BPFI (+1.4%); unresolved, kept 20 kHz +
+  FAULT_REL_TOLERANCE 0.03. T10/T11: notebooks + report rewritten from executed outputs
+  (bearing 4 kurtosis >8 in 190/381 snapshots 150-72 h before end, 0 in last 72 h; RMS
+  autocorr lag1 0.95-0.995; segment CV RMS 2-5.5%; test 1 baseline RMS +20-23%; onset table
+  changed: t1b3 34.2 h, t2 74.5/73.5/69.5 h, t3 133.2/41.2/41.2 h).
