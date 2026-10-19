@@ -8,7 +8,8 @@ Suggested numbering:
 
 - `01_data_inventory.py`
 - `02_signal_exploration.py`
-- `03_feature_baseline.py`
+- `03_data_preparation.py` (Phase III: cleaning counts, time axes, "Mixto" segmentation, leave-one-test-out folds)
+- `04_feature_baseline.py`
 
 ## Workflow
 
@@ -17,4 +18,4 @@ make notebook    # Open the interactive marimo editor on notebooks/
 make notebooks   # Export every notebook to build/notebooks/<name>.ipynb (with outputs) and .html
 ```
 
-`make notebooks` requires `data/raw/` to be present (`make data`) and, for notebooks that read `data/interim/`, the derived tables from `make indicators`. Exports are generated artifacts: `build/` is git-ignored and never committed. Reviewers and non-marimo readers should open the exported `.html` (self-contained, no server needed) or `.ipynb` under `build/notebooks/`.
+`make notebooks` requires `data/raw/` to be present (`make data`) and, for notebooks that read `data/interim/`, the derived tables from `make indicators`; `03_data_preparation.py` also reads `data/processed/ims_snapshot_manifest.csv` from `make manifest`. Exports are generated artifacts: `build/` is git-ignored and never committed. Reviewers and non-marimo readers should open the exported `.html` (self-contained, no server needed) or `.ipynb` under `build/notebooks/`.
