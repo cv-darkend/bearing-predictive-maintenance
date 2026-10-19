@@ -16,6 +16,10 @@ import pandas as pd
 
 from bearing_predictive_maintenance import ims
 
+# Samples at or beyond this magnitude sit at the acquisition limit: the IMS recordings
+# saturate at +/-4.999 (a +/-5 V range), so their true amplitude is unknown.
+SATURATION_LEVEL = 4.99
+
 INVENTORY_COLUMNS = (
     "test_id",
     "file",
@@ -23,6 +27,7 @@ INVENTORY_COLUMNS = (
     "n_rows",
     "n_cols",
     "n_non_finite",
+    "n_saturated",
     "gap_seconds",
     "elapsed_hours",
     "read_error",
@@ -41,6 +46,7 @@ def _inventory_row(test_id: str, path: Path, timestamp: datetime) -> dict[str, o
             "n_rows": 0,
             "n_cols": 0,
             "n_non_finite": 0,
+            "n_saturated": 0,
             "read_error": str(error),
         }
     return {
@@ -50,6 +56,7 @@ def _inventory_row(test_id: str, path: Path, timestamp: datetime) -> dict[str, o
         "n_rows": array.shape[0],
         "n_cols": array.shape[1] if array.ndim == 2 else 0,
         "n_non_finite": int(np.count_nonzero(~np.isfinite(array))),
+        "n_saturated": int(np.count_nonzero(np.abs(array) >= SATURATION_LEVEL)),
         "read_error": None,
     }
 
@@ -104,6 +111,8 @@ class InventorySummary:
     non_finite_file_count: int
     non_finite_value_count: int
     channel_count_mismatch_count: int
+    saturated_file_count: int
+    saturated_value_count: int
 
 
 def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> InventorySummary:
@@ -116,7 +125,9 @@ def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> Inventor
     Integrity counts: ``read_error_count`` counts files that could not be parsed,
     ``non_finite_file_count``/``non_finite_value_count`` count files and values that are
     NaN or non-numeric, and ``channel_count_mismatch_count`` counts readable files whose
-    column count differs from the documented channel map.
+    column count differs from the documented channel map. ``saturated_file_count``/
+    ``saturated_value_count`` count files and samples at the acquisition limit
+    (``SATURATION_LEVEL``).
     """
     observed_file_count = len(inventory)
     if observed_file_count == 0:
@@ -140,6 +151,8 @@ def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> Inventor
             non_finite_file_count=0,
             non_finite_value_count=0,
             channel_count_mismatch_count=0,
+            saturated_file_count=0,
+            saturated_value_count=0,
         )
 
     timestamps = pd.to_datetime(inventory["timestamp"])
@@ -182,4 +195,6 @@ def summarize_inventory(inventory: pd.DataFrame, spec: ims.TestSpec) -> Inventor
         non_finite_file_count=int((inventory["n_non_finite"] > 0).sum()),
         non_finite_value_count=int(inventory["n_non_finite"].sum()),
         channel_count_mismatch_count=channel_mismatches,
+        saturated_file_count=int((inventory["n_saturated"] > 0).sum()),
+        saturated_value_count=int(inventory["n_saturated"].sum()),
     )

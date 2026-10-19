@@ -114,6 +114,8 @@ def _(ims, inventory, pd, summarize_inventory):
                 "archivos_con_no_finitos": summary.non_finite_file_count,
                 "valores_no_finitos": summary.non_finite_value_count,
                 "archivos_canales_distintos": summary.channel_count_mismatch_count,
+                "archivos_saturados": summary.saturated_file_count,
+                "muestras_saturadas": summary.saturated_value_count,
             }
         )
     summary_table = pd.DataFrame(summary_rows).set_index("test")
@@ -127,7 +129,9 @@ def _(mo):
     **Lectura de la tabla:** en los tres tests todos los archivos tienen 20480 filas, ninguno falla
     al leerse (`errores_lectura` = 0), ninguno contiene valores no numéricos o no finitos
     (`valores_no_finitos` = 0), todos tienen el número de columnas que documenta el mapa de canales
-    (`archivos_canales_distintos` = 0) y no hay timestamps duplicados. Los tests 1 y 2 coinciden
+    (`archivos_canales_distintos` = 0) y no hay timestamps duplicados. Sí hay muestras en el
+    límite de adquisición (±4.999), solo en las capturas finales de cada test (sección de
+    saturación más abajo). Los tests 1 y 2 coinciden
     exactamente con la documentación de NASA en conteo de archivos e inicio/fin. El test 3 no: ver
     la sección de discrepancia más abajo.
 
@@ -283,11 +287,66 @@ def _(inventory, pd):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    El `readme` documenta que en el test 1 solo los primeros 43 archivos se tomaron cada 5 minutos.
-    Los datos muestran además una segunda ráfaga a 5 minutos el 2003-11-20 (tabla anterior). Un
-    eje temporal basado en el índice de snapshot contaría esas capturas como si representaran el
-    doble de tiempo de operación.
+    El `readme` documenta que en el test 1 los primeros 43 archivos se tomaron cada 5 minutos; en
+    los datos ese tramo aparece como 40 huecos de 300 s seguidos, más una ráfaga corta el mismo
+    día y otra el 2003-11-09. Los datos muestran además una ráfaga larga a 5 minutos el 2003-11-20
+    (tabla anterior). Un eje temporal basado en el índice de snapshot contaría esas capturas como
+    si representaran el doble de tiempo de operación.
     """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Longitud de las series: horas de reloj vs. horas de operación
+
+    Las horas de operación acumulan cada hueco entre capturas solo hasta la cadencia nominal
+    (600 s), de modo que las pausas del banco no suman tiempo.
+    """)
+    return
+
+
+@app.cell
+def _(inventory, pd):
+    NOMINAL_CADENCE_S = 600.0
+    _rows = []
+    for _test_id, _group in inventory.sort_values("timestamp").groupby("test_id"):
+        _gaps = _group["gap_seconds"].fillna(0.0)
+        _rows.append(
+            {
+                "test": _test_id,
+                "archivos": len(_group),
+                "horas_reloj": float(_group["elapsed_hours"].iloc[-1]),
+                "horas_operacion": float(_gaps.clip(upper=NOMINAL_CADENCE_S).sum() / 3600),
+            }
+        )
+    series_length = pd.DataFrame(_rows)
+    series_length
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Saturación del sistema de adquisición
+
+    Archivos con muestras en el límite de adquisición (|x| ≥ 4.99; los registros saturan en
+    ±4.999). En esas muestras la amplitud real es desconocida. Solo aparecen al final de cada
+    test: 3 archivos del test 1 (9 muestras, desde las 23:13:21 del último día), 2 del test 2
+    (47 muestras, entre las 05:02:39 y las 05:42:39 del último día) y 4 del test 3 (89 muestras,
+    desde las 01:32:55 del último día). Las capturas tardías de los tests 1 y 3 que usa el
+    cuaderno 02 están entre ellas, así que sus picos y su curtosis están recortados.
+    """)
+    return
+
+
+@app.cell
+def _(inventory):
+    saturated_files = inventory.loc[
+        inventory["n_saturated"] > 0, ["test_id", "file", "timestamp", "n_saturated"]
+    ]
+    saturated_files
     return
 
 
@@ -411,8 +470,8 @@ def _(mo):
     test.
     3. **Los huecos de tiempo del test 1 no son errores**: son pausas de operación reales. Para
     ventanas de tiempo, decidir explícitamente si "horas transcurridas" usa tiempo de reloj (incluye
-    inactividad) o índice secuencial de snapshot (solo operación); ambos se usan en la sección de
-    tendencias del cuaderno 02.
+    inactividad), índice de snapshot (cadencia no uniforme) u horas de operación sin pausas (tabla
+    de longitud de las series).
     4. **No hay archivos corruptos ni timestamps duplicados** en ningún test: 0 errores de lectura,
     0 valores no finitos, 20480 filas y el número de canales documentado en el 100% de los archivos
     (columnas de integridad de la tabla resumen).

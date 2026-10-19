@@ -149,3 +149,21 @@ def test_summarize_inventory_counts_gaps_over_threshold(tmp_path: Path) -> None:
     assert summary.median_gap_seconds == pytest.approx(600.0)
     assert summary.gaps_over_1_5x_median == 1
     assert summary.rows_per_file_consistent is True
+
+
+def test_inventory_counts_samples_at_the_acquisition_limit(tmp_path: Path) -> None:
+    test_dir = tmp_path / "2nd_test" / "2nd_test"
+    test_dir.mkdir(parents=True)
+    _write_snapshot(test_dir / "2004.02.12.10.32.39", [["0.1", "0.2", "0.3", "0.4"]] * 3)
+    _write_snapshot(
+        test_dir / "2004.02.12.10.42.39",
+        [["4.999", "0.2", "0.3", "0.4"], ["0.1", "-4.999", "0.3", "4.98"], ["0.1"] * 4],
+    )
+    inv = inventory.build_inventory(tmp_path, "2")
+
+    summary = inventory.summarize_inventory(inv, ims.TEST_REGISTRY["2"])
+
+    # 4.98 is below the limit; only the two +/-4.999 samples are saturated.
+    assert list(inv["n_saturated"]) == [0, 2]
+    assert summary.saturated_file_count == 1
+    assert summary.saturated_value_count == 2

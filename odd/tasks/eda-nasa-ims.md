@@ -316,3 +316,13 @@ Next phase (out of scope here): CRISP-DM Phase III (feature matrix, windowing, l
   (bearing 4 kurtosis >8 in 190/381 snapshots 150-72 h before end, 0 in last 72 h; RMS
   autocorr lag1 0.95-0.995; segment CV RMS 2-5.5%; test 1 baseline RMS +20-23%; onset table
   changed: t1b3 34.2 h, t2 74.5/73.5/69.5 h, t3 133.2/41.2/41.2 h).
+- L6 (2026-10-18) — data-auditor re-audit of 2b3df96: numbers reproduce; 3 blockers. B1 inner
+  race weaker than claimed (envelope 1.4x, late kurtosis 146 -> 6 >8 after trimming 10 extreme
+  samples). B2 slip reasoning wrong for BPFI (BPFO+BPFI = n*fr; slip raises BPFI). B3 +/-3%
+  window was data-informed, not a priori; 7-19% of evolution points peak on the window edge.
+  User granted native review (lens readability+reliability) for target sha256:374a2cdd...;
+  deferred until the correction batch lands, since the candidate would change. One correction
+  batch: B1-B3 + advisories (ADC saturation counts in inventory, n_saturated: 3/2/4 files,
+  9/47/89 samples; operating hours 345.3/163.8/1053.4; descriptive stats; trimmed-kurtosis
+  robustness; max-in-window 59.4 at 92.6 h; shape-factor wording; operating-hours positives
+  146/291/435 for test 1; cadence wording in notebook 01).

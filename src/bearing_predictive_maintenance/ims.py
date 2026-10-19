@@ -28,10 +28,12 @@ import pandas as pd
 SNAPSHOT_TIMESTAMP_FORMAT = "%Y.%m.%d.%H.%M.%S"
 
 # The readme documents 20 kHz and 20480 points per "1-second" snapshot, which is
-# internally inconsistent (20480 / 20000 = 1.024 s). 20 kHz is kept: observed fault
-# lines sit 1-2% below the kinematic frequencies (consistent with bearing slip) for the
-# inner race at 20 kHz, while the outer-race lines would match better at 20.48 kHz. See
-# ``spectral.fault_peak`` for how the analysis stays robust to this ambiguity.
+# internally inconsistent (20480 / 20000 = 1.024 s). The documented 20 kHz is kept; the
+# data do not settle it. Cage slip lowers BPFO but raises BPFI (BPFO + BPFI = n_rollers *
+# shaft frequency), so slip alone explains neither reading: at 20 kHz the outer-race
+# lines (-2.1%/-2.5%) fit slip but the inner-race line (-1.0%) needs a shaft about 1%
+# below 2000 RPM; at 20.48 kHz the inner-race line (+1.4%) fits slip but the outer-race
+# lines would need none. See ``spectral.fault_peak`` for the relative-window search.
 SAMPLING_RATE_HZ = 20_000.0
 SHAFT_SPEED_RPM = 2000.0
 RADIAL_LOAD_LBF = 6000.0

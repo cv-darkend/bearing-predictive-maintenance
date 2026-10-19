@@ -8,12 +8,12 @@ crudos, se detectó y documentó una discrepancia relevante en el test 3 respect
 `readme` de NASA, se identificaron capturas posteriores al apagado del banco de pruebas
 que deben excluirse del análisis, y se exploraron indicadores de tiempo y frecuencia para
 los cuatro rodamientos con falla documentada. El hallazgo más relevante para el
-modelado: los defectos de pista (interna y externa) dejan una huella clara al final del
-test tanto en indicadores de tiempo (curtosis) como en el espectro de envolvente. El
-defecto de elemento rodante del rodamiento 4 (test 1) se comporta distinto: su curtosis
-tiene un episodio fuerte entre 150 y 72 horas antes del final que luego desaparece, y su
-amplitud de envolvente en la frecuencia característica (BSF) crece solo ≈1.9× y sin un
-pico dominante. Todos los números de este informe provienen de
+modelado: solo los dos defectos de pista externa (tests 2 y 3) dejan una huella clara y
+dominante en el espectro de envolvente al final del test. Los dos defectos del test 1 son
+más débiles: el de pista interna (rodamiento 3) crece solo 1.4× en la envolvente y su
+subida final de curtosis depende de unas pocas muestras extremas; el de elemento rodante
+(rodamiento 4) tiene un episodio de curtosis robusto entre 150 y 72 horas antes del final
+que luego desaparece, y su amplitud en BSF crece solo ≈1.9× y sin un pico dominante. Todos los números de este informe provienen de
 `notebooks/01_data_inventory.py` y `notebooks/02_signal_exploration.py` (notebooks
 [marimo](https://marimo.io/), sin salidas almacenadas en el fuente). El cuaderno 01 lee
 las tablas de `data/interim/` que genera `make indicators` a partir de los datos crudos
@@ -72,6 +72,18 @@ finitos), todos tienen el número de columnas que documenta el mapa de canales y
 timestamps duplicados (columnas de integridad de la misma tabla): no hay evidencia de
 archivos corruptos o mezclados entre tests.
 
+**Saturación** (notebook 01, sección "Saturación del sistema de adquisición"): algunas
+muestras alcanzan el límite de adquisición (±4.999), solo en las capturas finales de cada
+test: 3 archivos del test 1 (9 muestras, desde las 23:13:21 del último día), 2 del test 2
+(47 muestras, entre las 05:02:39 y las 05:42:39) y 4 del test 3 (89 muestras, desde las
+01:32:55). En esas muestras la amplitud real es desconocida, y las capturas tardías que
+usa el notebook 02 en los tests 1 y 3 están entre ellas.
+
+**Longitud de las series** (notebook 01, sección "Longitud de las series"): el test 1 dura
+827.6 horas de reloj pero solo 345.3 horas de operación (acumulando cada hueco hasta la
+cadencia nominal de 600 s); el test 2, 163.8 h en ambos casos; el test 3, 1073.3 horas de
+reloj y 1053.4 de operación.
+
 **Cadencia de muestreo** (notebook 01, sección "Cadencia de muestreo"): la mediana de
 huecos entre snapshots consecutivos es 600 s en los tres tests. El test 1 tiene huecos
 grandes recurrentes (pausas de operación reales, no errores): el mayor es de ≈6.2 días
@@ -107,16 +119,26 @@ varias veces mayores que la captura temprana (primer snapshot del test), con pic
 impulsivos visibles a simple vista en la forma de onda — consistente con el desarrollo de
 un defecto de rodamiento.
 
+**Estadísticos descriptivos** (notebook 02, sección "Estadísticos descriptivos por test y
+rodamiento"): sobre las capturas válidas, la mediana del RMS va de 0.055 a 0.115 según el
+rodamiento y la de la curtosis de 3.12 a 4.32, con rangos intercuartílicos estrechos
+(p. ej. RMS 0.066-0.070 en el rodamiento 3 del test 3): la mayor parte de cada test es
+estable, y la degradación ocupa una fracción pequeña de las capturas.
+
 **Tendencias de degradación** (notebook 02, sección "Tendencias de degradación"): RMS,
 curtosis y factor de cresta muestran una subida clara, tardía y concentrada en las
 últimas horas, para los rodamientos 3 (test 1), 1 (test 2) y 3 (test 3). El
 **rodamiento 4 del test 1 tiene un comportamiento distinto** (notebook 02, sección
 "Curtosis por rodamiento al final del test 1"): entre 150 y 72 h antes de la última
 captura válida, 190 de sus 381 capturas superan una curtosis de 8 (línea base ≈4.3), con
-un máximo de 74.6 a ≈152 h del final; en las últimas 72 h ninguna captura supera 8. El
-rodamiento 3 hace lo contrario: 146 de sus 296 capturas de las últimas 72 h superan 8
-(máximo 74.6 a ≈64 h del final). Los rodamientos 1 y 2 nunca superan 8. En la figura de
-tendencias el episodio del rodamiento 4 se ve atenuado porque se promedian los dos ejes.
+un máximo de 59.4 a ≈93 h del final dentro de ese tramo; en las últimas 72 h ninguna
+captura supera 8. El rodamiento 3 hace lo contrario: 146 de sus 296 capturas de las
+últimas 72 h superan 8 (máximo 74.6 a ≈64 h del final). Los rodamientos 1 y 2 nunca
+superan 8. En la figura de tendencias el episodio del rodamiento 4 se ve atenuado porque se
+promedian los dos ejes. Al quitar las 10 muestras más extremas de cada captura (de 20480),
+el episodio del rodamiento 4 se mantiene en 108 de las 190 capturas, pero la subida final
+del rodamiento 3 cae de 146 a 6: la curtosis tardía del rodamiento 3 la producen unos
+pocos impactos aislados, y los máximos de 74.6 de ambos rodamientos son de ese tipo.
 
 Para el test 1 se compararon dos ejes temporales, horas de reloj e índice secuencial de
 snapshot, dado que este test tiene huecos de tiempo grandes (arriba): la forma de la
@@ -137,8 +159,9 @@ matriz de correlación entre los diez indicadores de tiempo (test 1):
   (|r| 0.76-0.89 con curtosis, factor de cresta y factor de impulso) que al RMS
   (|r| 0.69-0.74).
 - Curtosis, factor de cresta y factor de impulso forman un grupo (|r| 0.81-1.00).
-- El factor de forma queda en un punto intermedio (|r| 0.57-0.64) y la asimetría no se
-  correlaciona con ningún otro indicador (|r| ≤ 0.16).
+- El factor de forma queda en un punto intermedio: |r| 0.57-0.64 con la familia de
+  impulsividad y 0.33-0.36 con RMS y energía. La asimetría no se correlaciona con ningún
+  otro indicador (|r| ≤ 0.16).
 
 Estas correlaciones mezclan los cuatro rodamientos y todos los momentos del test, que
 comparten una tendencia, lo que las infla; no miden la redundancia entre rodamientos del
@@ -181,13 +204,20 @@ seguido de 924 y 692 Hz en el test 3. El defecto solo se revela con claridad al 
 resonancia.
 
 **Desviación de las frecuencias características.** Todas las líneas observadas caen 1-3%
-por debajo de las frecuencias cinemáticas, en la misma dirección, lo que es consistente
-con el deslizamiento de los elementos rodantes, habitual en rodamientos reales. Con una
-frecuencia de muestreo de 20.48 kHz (la otra lectura posible del `readme`), las líneas de
-pista externa quedarían a 0.3% del BPFO, pero la de pista interna pasaría a 1.4% por
-encima del BPFI. Los datos no resuelven la ambigüedad: se conserva 20 kHz y los picos se
-buscan en una ventana relativa de ±3%, fijada a priori. Con la ventana fija de ±5 Hz que
-se usaba antes, el pico del test 3 (230.5 Hz) quedaba fuera de la ventana.
+por debajo de las frecuencias cinemáticas. El deslizamiento de la jaula no basta para
+explicarlo: baja BPFO pero sube BPFI, porque BPFO + BPFI = 16 × frecuencia del eje. Con
+20 kHz, las líneas de pista externa (−2.1% y −2.5%) son compatibles con deslizamiento,
+pero la de pista interna (−1.0%) requiere además un eje ≈1% más lento que los 2000 RPM
+nominales (con 1980 RPM el BPFI teórico es 293.96 Hz, frente a 293.9 Hz observado). Con
+20.48 kHz, la otra lectura posible del `readme`, la línea de pista interna (+1.4%) sí
+sería compatible con deslizamiento, pero las de pista externa quedarían sin él (+0.3%).
+Las líneas del eje en los espectros son demasiado débiles para medir su velocidad, así
+que los datos no resuelven la ambigüedad: se conserva el valor documentado, 20 kHz.
+
+Los picos se buscan en una ventana relativa de ±3% alrededor de cada frecuencia teórica.
+Esa tolerancia se eligió **después** de observar que el pico de pista externa del test 3
+(230.5 Hz) quedaba fuera de la ventana fija de ±5 Hz que se usaba antes; es un parámetro
+informado por los datos, y ese pico queda a solo 0.5% del borde de la nueva ventana.
 
 **Evolución temporal de la amplitud de envolvente en la frecuencia documentada**
 (notebook 02, sección "Evolución temporal..."; submuestreo declarado: test 1 cada 5
@@ -201,13 +231,16 @@ media del primer 20% de cada serie con la mediana y el percentil 90 de las últi
 | Test 2, rodamiento 1 (BPFO) | 0.0026 | 0.0151 | 5.7× | 19.2× |
 | Test 3, rodamiento 3 (BPFO) | 0.0018 | 0.0047 | 2.6× | 50.8× |
 
-En los rodamientos de pista externa la amplitud en BPFO permanece baja durante casi todo
-el test y crece fuerte al final (en el test 3 la subida se concentra en las últimas
-horas, de ahí la diferencia entre mediana y p90). En el rodamiento 4 del test 1 el
-aumento en BSF es real pero débil y ruidoso. Junto con su episodio de curtosis, esto
-indica que **el defecto de elemento rodante sí deja huella en ambos dominios, aunque más
-débil y no concentrada al final**, y no debería descartarse como "sin señal" al diseñar
-características para el modelado.
+Solo en los rodamientos de pista externa la amplitud permanece baja durante casi todo el
+test y crece fuerte al final (en el test 3 la subida se concentra en las últimas horas,
+de ahí la diferencia entre mediana y p90). En el test 1 ambos defectos crecen poco: la
+pista interna 1.4× y el elemento rodante 1.9× en mediana. Junto con su episodio de
+curtosis, esto indica que **el defecto de elemento rodante sí deja huella en ambos
+dominios, aunque débil y no concentrada al final**, y no debería descartarse como "sin
+señal" al diseñar características para el modelado. En el 7-19% de los puntos de cada
+serie el máximo cae en el bin del borde de la ventana de ±3%: ahí el valor no es una línea
+espectral sino el borde de la búsqueda, lo que añade ruido sobre todo al test 1 y al
+test 3.
 
 **Inicio exploratorio de degradación (onset)** (notebook 02, sección "Inicio exploratorio
 de degradación"; detector `spectral.detect_onset`, explícitamente exploratorio, no una
@@ -222,8 +255,10 @@ parámetros:
 | Test 2, rodamiento 1 (BPFO) | 74.5 h | 73.5 h | 69.5 h |
 | Test 3, rodamiento 3 (BPFO) | 133.2 h | 41.2 h | 41.2 h |
 
-La estimación varía considerablemente según el umbral (de 41.2 a 133.2 horas para el
-rodamiento 3 del test 3, según el parámetro), lo que confirma que este detector **no**
+En el test 1, la línea base del detector (el primer 20% de la serie) cae en el tramo
+inicial que la sección de estabilidad muestra como no estable. La estimación varía
+considerablemente según el umbral (de 41.2 a 133.2 horas para el rodamiento 3 del test 3,
+según el parámetro), lo que confirma que este detector **no**
 debe usarse como frontera exacta para una etiqueta de producción, solo como referencia
 exploratoria de orden de magnitud.
 
@@ -275,7 +310,8 @@ exploratoria de orden de magnitud.
   3, pista externa, así que cada partición evalúa un modo de falla que puede no estar en
   entrenamiento.
 - **Parámetros elegidos con la serie completa**: las bandas de envolvente se derivaron de
-  la captura de fin de vida, y los umbrales de onset y de apagado usan la propia serie.
+  la captura de fin de vida, la tolerancia de ±3% de la búsqueda de picos se eligió tras
+  ver el pico de pista externa, y los umbrales de onset y de apagado usan la propia serie.
   Si se reutilizan en la Fase III son fuga de la etiqueta: deben fijarse a priori o
   ajustarse solo con los datos de entrenamiento de cada partición.
 - **Desbalance de clases estimado** (candidatos, no decisiones; notebook 02, sección de
@@ -297,8 +333,9 @@ exploratoria de orden de magnitud.
   En el test 1, el horizonte de 24 h en horas de reloj contiene solo 39 capturas porque
   las últimas 24 h incluyen dos pausas de adquisición (≈10.8 h, que termina el
   2003-11-25 10:47:32, y ≈7.1 h, que termina el 2003-11-25 23:13:21), que suman ≈17.9 h.
-  Un horizonte expresado en horas de operación o en número de capturas daría proporciones
-  distintas.
+  Medido en horas de operación, el mismo horizonte contiene 146 capturas (291 con 48 h y
+  435 con 72 h); en el test 3, el horizonte de 72 h pasa de 390 a 433 capturas por su
+  pausa de ≈7.5 h. El eje temporal elegido cambia directamente el desbalance.
 
   Además, estas proporciones son por rodamiento fallado. Si se entrena con todos los
   rodamientos (incluidos los que no fallan, cuyas capturas serían todas negativas), la
@@ -308,10 +345,12 @@ exploratoria de orden de magnitud.
   F1, PR-AUC) además de la exactitud.
 - **Características prometedoras**: una variable de energía (RMS; desviación estándar y
   energía son redundantes con ella), una de impulsividad (curtosis o factor de cresta; el
-  pico se agrupa con esta familia) y las amplitudes de envolvente en las frecuencias
-  características, buscadas con la ventana relativa de ±3%. Las amplitudes de envolvente
-  son la familia más directamente vinculada al mecanismo de falla y deberían priorizarse
-  junto con curtosis/factor de cresta, sin incluir todas las variantes redundantes.
+  pico se agrupa con esta familia), preferiblemente en una versión robusta a muestras
+  aisladas, y las amplitudes de envolvente en las frecuencias características, buscadas
+  con la ventana relativa de ±3%. Las amplitudes de envolvente son la familia más
+  directamente vinculada al mecanismo de falla, pero solo mostraron una huella clara en
+  pista externa: no deben ser la única familia, porque los dos defectos del test 1 se
+  verían poco. Conviene no incluir todas las variantes redundantes.
 
 ## Limitaciones y preguntas abiertas
 
@@ -332,7 +371,9 @@ exploratoria de orden de magnitud.
    o se excluyen sus últimas capturas?
 6. La frecuencia de muestreo es ambigua (20 kHz vs. 20480 muestras por "1 segundo"). No
    cambia los indicadores de tiempo, pero sí la lectura de las frecuencias
-   características; la ventana relativa de ±3% absorbe la diferencia.
+   características, y ninguna de las dos lecturas explica todas las líneas solo con
+   deslizamiento. La ventana relativa de ±3% absorbe la diferencia, pero fue elegida
+   mirando los datos.
 7. La elección de bandas de envolvente se hizo con una heurística simple y de un solo
    caso por rodamiento (temprano vs. tardío), mirando la captura de fin de vida; no se
    validó con más casos ni se contrastó contra literatura especializada. El detector de
@@ -341,5 +382,7 @@ exploratoria de orden de magnitud.
 8. El submuestreo usado en la evolución temporal (cada 5/3/15 archivos) reduce el costo
    de cómputo pero también la resolución temporal exacta del onset; una versión posterior
    podría usar el conjunto completo si el presupuesto de cómputo lo permite.
-9. Este informe cubre solo NASA IMS. El análisis exploratorio del conjunto CWRU que
+9. Las capturas finales de cada test tienen muestras saturadas (±4.999): sus picos y su
+   curtosis están recortados, justo donde la degradación es mayor.
+10. Este informe cubre solo NASA IMS. El análisis exploratorio del conjunto CWRU que
    menciona el documento del proyecto no tiene código ni resultados en este repositorio.

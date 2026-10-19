@@ -96,7 +96,9 @@ def _(INTERIM_DIR, ims, pd):
     FREQ_LOOKUP = {"FTF": FREQS.ftf, "BPFO": FREQS.bpfo, "BPFI": FREQS.bpfi, "BSF": FREQS.bsf}
     # Observed fault lines sit a few percent off the kinematic frequencies (bearing slip,
     # shaft-speed deviation, sampling-rate ambiguity), so peaks are searched within a
-    # relative window instead of a fixed width in Hz. Fixed a priori, not tuned per bearing.
+    # relative window instead of a fixed width in Hz. Chosen after seeing that the IMS
+    # outer-race peak fell outside a +/-5 Hz window: a data-informed parameter, not tuned
+    # per bearing, that must be fixed or fitted on training folds only in Phase III.
     FAULT_REL_TOLERANCE = 0.03
 
     FAILED_COMBOS = [
@@ -170,6 +172,34 @@ def _(mo):
     la última captura *válida* (excluyendo las capturas posteriores al apagado identificadas en el
     cuaderno 01).
     """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Estadísticos descriptivos por test y rodamiento
+
+    Capturas válidas de cada rodamiento (en el test 1, ambos ejes juntos): mediana y rango
+    intercuartílico de RMS y curtosis.
+    """)
+    return
+
+
+@app.cell
+def _(indicators, last_valid, pd):
+    _rows = []
+    for (_test_id, _bearing), _group in indicators.groupby(["test_id", "bearing"]):
+        _valid = _group[_group["elapsed_hours"] <= last_valid[_test_id]["elapsed_hours"]]
+        _row = {"test": _test_id, "rodamiento": int(_bearing), "capturas": _valid["file"].nunique()}
+        for _metric in ("rms", "kurtosis"):
+            _q = _valid[_metric].quantile([0.25, 0.5, 0.75])
+            _row[f"{_metric}_p25"] = float(_q.loc[0.25])
+            _row[f"{_metric}_mediana"] = float(_q.loc[0.5])
+            _row[f"{_metric}_p75"] = float(_q.loc[0.75])
+        _rows.append(_row)
+    descriptive_stats = pd.DataFrame(_rows)
+    descriptive_stats
     return
 
 
@@ -444,6 +474,8 @@ def _(indicators, last_valid, pd):
                 "curtosis_mayor_8_ultimas_72h": int(((_per_file > 8) & _last).sum()),
                 "curtosis_max": float(_per_file.max()),
                 "horas_antes_del_final_en_max": float(_end - _per_file.idxmax()),
+                "curtosis_max_150_a_72h": float(_per_file[_mid].max()),
+                "horas_antes_del_final_en_max_150_a_72h": float(_end - _per_file[_mid].idxmax()),
             }
         )
     kurtosis_episodes = pd.DataFrame(_rows)
@@ -451,17 +483,59 @@ def _(indicators, last_valid, pd):
     return
 
 
+@app.cell
+def _(compute_time_domain_indicators, indicators, last_valid, load_channel_signal, np, pd):
+    # Robustness: are the kurtosis episodes carried by a few extreme samples? Recompute
+    # kurtosis after dropping the N_TRIMMED largest |x - mean| samples of each channel.
+    N_TRIMMED = 10
+    _end = last_valid["1"]["elapsed_hours"]
+    _files = (
+        indicators[(indicators["test_id"] == "1") & (indicators["elapsed_hours"] <= _end)]
+        .drop_duplicates("file")
+        .set_index("file")["elapsed_hours"]
+    )
+    _files = _files[_end - _files <= 150]
+    _rows = []
+    for _bearing in (3, 4):
+        for _file, _elapsed in _files.items():
+            _kurt = []
+            for _axis in ("x", "y"):
+                _signal = load_channel_signal("1", _file, _bearing, _axis)
+                _order = np.argsort(np.abs(_signal - _signal.mean()))
+                _trimmed = _signal[_order[: len(_signal) - N_TRIMMED]].reshape(-1, 1)
+                _kurt.append(compute_time_domain_indicators(_trimmed).loc[1, "kurtosis"])
+            _rows.append(
+                {"rodamiento": _bearing, "horas_antes": _end - _elapsed, "curtosis": max(_kurt)}
+            )
+    _trim = pd.DataFrame(_rows)
+    _trim["tramo"] = np.where(_trim["horas_antes"] > 72, "150_a_72h", "ultimas_72h")
+    trimmed_kurtosis = (
+        _trim.assign(mayor_8=_trim["curtosis"] > 8)
+        .groupby(["rodamiento", "tramo"])
+        .agg(capturas=("curtosis", "size"), curtosis_mayor_8=("mayor_8", "sum"))
+        .reset_index()
+    )
+    trimmed_kurtosis
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **El rodamiento 4 sí tiene un episodio fuerte de curtosis, pero no al final.** Entre 150 y 72 h
+    **El rodamiento 4 tiene un episodio fuerte de curtosis, pero no al final.** Entre 150 y 72 h
     antes de la última captura válida, 190 de sus 381 capturas superan una curtosis de 8 (línea base
-    ≈4.3), con un máximo de 74.6 a ≈152 h del final; en las últimas 72 h ninguna captura supera 8.
-    El rodamiento 3 hace lo contrario: su curtosis sube en las últimas 72 h (146 de 296 capturas por
-    encima de 8, máximo 74.6 a ≈64 h del final). Los rodamientos 1 y 2 nunca superan 8. En la figura
-    de tendencias el episodio del rodamiento 4 se ve atenuado porque se promedian los dos ejes.
-    Implicación: un criterio de etiquetado o de onset basado en curtosis se dispararía ~150 h antes
-    del final para el rodamiento 4 y luego dejaría de hacerlo.
+    ≈4.3), con un máximo de 59.4 a ≈93 h del final dentro de ese tramo; en las últimas 72 h ninguna
+    captura supera 8. El rodamiento 3 hace lo contrario: 146 de sus 296 capturas de las últimas
+    72 h superan 8 (máximo 74.6 a ≈64 h del final). Los rodamientos 1 y 2 nunca superan 8. En la
+    figura de tendencias el episodio del rodamiento 4 se ve atenuado porque se promedian los ejes.
+
+    **Robustez (tabla siguiente).** Al quitar las 10 muestras más extremas de cada captura (de
+    20480), el episodio del rodamiento 4 se mantiene en 108 de las 190 capturas, mientras que la
+    subida final del rodamiento 3 cae de 146 a 6 capturas: la curtosis tardía del rodamiento 3 la
+    producen unos pocos impactos aislados. Los máximos de 74.6 de ambos rodamientos son de ese tipo.
+    Implicación: un criterio de etiquetado basado en curtosis se dispararía ~150 h antes del final
+    para el rodamiento 4 y luego dejaría de hacerlo, y para el rodamiento 3 dependería de pocas
+    muestras.
     """)
     return
 
@@ -909,12 +983,18 @@ def _(mo):
     temporal muestra, aun así, una tendencia ascendente en esa frecuencia.
 
     **Desviación de las frecuencias características.** Todas las líneas observadas caen 1-3% por
-    debajo de las frecuencias cinemáticas, en la misma dirección, lo que es consistente con el
-    deslizamiento de los elementos rodantes, habitual en rodamientos reales. El `readme` además es
-    ambiguo sobre la frecuencia de muestreo (20480 muestras descritas como 1 s a 20 kHz): con
-    20.48 kHz las líneas de pista externa quedarían a 0.3% del BPFO, pero la de pista interna
-    pasaría a 1.4% por encima del BPFI. Los datos no resuelven la ambigüedad, por lo que se conserva
-    20 kHz y los picos se buscan en una ventana relativa de ±3%, fijada a priori.
+    debajo de las frecuencias cinemáticas. El deslizamiento de la jaula no basta para explicarlo:
+    baja BPFO pero sube BPFI, porque BPFO + BPFI = 16 × frecuencia del eje. Con 20 kHz, las líneas
+    de pista externa (−2.1% y −2.5%) son compatibles con deslizamiento, pero la de pista interna
+    (−1.0%) requiere además un eje ≈1% más lento que los 2000 RPM nominales (con 1980 RPM el BPFI
+    teórico es 293.96 Hz, frente a 293.9 Hz observado). Con 20.48 kHz, que es la otra lectura
+    posible del `readme` (20480 muestras descritas como 1 s a 20 kHz), la línea de pista interna
+    (+1.4%) sí sería compatible con deslizamiento, pero las de pista externa quedarían sin él
+    (+0.3%). Las líneas del eje son demasiado débiles para medir su velocidad, así que los datos no
+    resuelven la ambigüedad: se conserva el valor documentado, 20 kHz. Los picos se buscan en una
+    ventana relativa de ±3%; esa tolerancia se eligió después de observar que el pico de pista
+    externa quedaba fuera de la ventana fija de ±5 Hz, así que es un parámetro informado por los
+    datos.
     """)
     return
 
@@ -978,6 +1058,8 @@ def _(
                     "elapsed_hours": elapsed_lookup[_test_id][path.name],
                     "envelope_amp": amp_at_target,
                     "peak_freq_hz": _peak_freq,
+                    "at_window_edge": abs(_peak_freq - target)
+                    >= FAULT_REL_TOLERANCE * target - (freqs_[1] - freqs_[0]),
                 }
             )
         evolution_frames.append(pd.DataFrame(rows))
@@ -1032,6 +1114,9 @@ def _(FAILED_COMBOS, evolution, last_valid, pd):
                 "ultimas_100h_p90": float(_late.quantile(0.9)),
                 "razon_mediana": float(_late.median() / _baseline.mean()),
                 "razon_p90": float(_late.quantile(0.9) / _baseline.mean()),
+                # Share of points whose maximum sits on the search-window edge bin: there the
+                # value is the window boundary, not a spectral line.
+                "fraccion_pico_en_borde": float(_data["at_window_edge"].mean()),
             }
         )
     envelope_growth = pd.DataFrame(_rows)
@@ -1043,14 +1128,19 @@ def _(FAILED_COMBOS, evolution, last_valid, pd):
 def _(mo):
     mo.md(r"""
     **Crecimiento de la amplitud de envolvente (tabla anterior).** Se compara la media del primer
-    20% de la serie con la mediana y el percentil 90 de las últimas 100 h válidas. En los
-    rodamientos de pista externa el crecimiento es fuerte y concentrado al final (test 2: 5.7× en
-    mediana y 19× en p90; test 3: 2.6× en mediana pero 51× en p90, porque la subida ocurre en las
-    últimas horas). En el rodamiento 4 del test 1 (BSF), la amplitud pasa de una línea base de
-    ≈0.0035 a una mediana de ≈0.0065 (≈1.9×; ≈2.9× en p90): un aumento real pero débil y ruidoso.
-    Junto con el episodio de curtosis entre 150 y 72 h antes del final (sección de tendencias), esto
-    indica que el defecto de elemento rodante sí deja huella en ambos dominios, aunque más débil y
-    no concentrada al final.
+    20% de la serie con la mediana y el percentil 90 de las últimas 100 h válidas. Solo los
+    rodamientos de pista externa muestran un crecimiento fuerte y concentrado al final (test 2:
+    5.7× en mediana y 19× en p90; test 3: 2.6× en mediana pero 51× en p90, porque la subida ocurre
+    en las últimas horas). Los dos rodamientos del test 1 crecen poco: el de pista interna 1.4× en
+    mediana (2.4× en p90) y el de elemento rodante 1.9× (2.9× en p90). La pista interna no es, por
+    tanto, un caso de huella clara en la envolvente. Junto con el episodio de curtosis del
+    rodamiento 4 entre 150 y 72 h antes del final, esto indica que el defecto de elemento rodante
+    sí deja huella en ambos dominios, aunque débil y no concentrada al final.
+
+    **Picos en el borde de la ventana.** En el 7-19% de los puntos de cada serie el máximo cae en el
+    bin del borde de la ventana de ±3% (`fraccion_pico_en_borde`): en esos puntos la "amplitud en la
+    frecuencia de falla" no es una línea espectral sino el borde de la búsqueda, lo que añade ruido
+    sobre todo a los rodamientos del test 1 y al test 3.
     """)
     return
 
@@ -1162,17 +1252,24 @@ def _(mo):
 @app.cell
 def _(FAILED_COMBOS, indicators, last_valid, pd):
     HORIZONS_HOURS = [24, 48, 72]
+    _NOMINAL_CADENCE_S = 600.0
     imbalance_rows = []
     for _combo in FAILED_COMBOS:
         _test_id = _combo["test"]
-        test_files = indicators[indicators["test_id"] == _test_id][
-            ["file", "elapsed_hours"]
-        ].drop_duplicates()
+        test_files = (
+            indicators[indicators["test_id"] == _test_id][["file", "timestamp", "elapsed_hours"]]
+            .drop_duplicates()
+            .sort_values("timestamp")
+        )
         _last_elapsed = last_valid[_test_id]["elapsed_hours"]
         valid_files = test_files[test_files["elapsed_hours"] <= _last_elapsed]
         n_total = len(valid_files)
+        # Operating hours: each gap counts at most one nominal cadence step.
+        _gaps = valid_files["timestamp"].diff().dt.total_seconds().fillna(0.0)
+        _operating = _gaps.clip(upper=_NOMINAL_CADENCE_S).cumsum() / 3600
         for horizon in HORIZONS_HOURS:
             n_positive = int((valid_files["elapsed_hours"] >= _last_elapsed - horizon).sum())
+            _n_operating = int((_operating >= _operating.iloc[-1] - horizon).sum())
             imbalance_rows.append(
                 {
                     "combo": _combo["label"],
@@ -1180,6 +1277,7 @@ def _(FAILED_COMBOS, indicators, last_valid, pd):
                     "n_total_snapshots": n_total,
                     "n_positivos": n_positive,
                     "proporcion_positivos": n_positive / n_total,
+                    "n_positivos_horas_operacion": _n_operating,
                 }
             )
     imbalance_table = pd.DataFrame(imbalance_rows)
@@ -1197,11 +1295,14 @@ def _(mo):
     (|r| 0.99 entre sí) se parecen más a la familia de impulsividad (|r| 0.76-0.89 con curtosis,
     factor de cresta y factor de impulso) que al RMS (|r| 0.69-0.74). Curtosis, factor de cresta y
     factor de impulso forman un grupo (|r| 0.81-1.00); el factor de forma queda en un punto
-    intermedio (|r| 0.57-0.64 con los demás) y la asimetría no se correlaciona con ningún otro
+    intermedio (|r| 0.57-0.64 con la familia de impulsividad y 0.33-0.36 con RMS y energía) y la
+    asimetría no se correlaciona con ningún otro
     (|r| ≤ 0.16). Estas correlaciones mezclan rodamientos y momentos con una tendencia compartida,
     lo que las infla; no miden la redundancia entre rodamientos del mismo eje. Para la Fase III son
-    prometedoras una variable de energía (RMS), una de impulsividad (curtosis o factor de cresta) y
-    las amplitudes de envolvente en las frecuencias características, sin incluir todas las variantes
+    prometedoras una variable de energía (RMS), una de impulsividad (curtosis o factor de cresta,
+    preferiblemente con una versión robusta a muestras aisladas) y las amplitudes de envolvente en
+    las frecuencias características, que solo mostraron una huella clara en pista externa, sin
+    incluir todas las variantes
     redundantes.
 
     ### Preguntas abiertas para el equipo
