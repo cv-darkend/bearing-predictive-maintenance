@@ -82,7 +82,7 @@ Route: all inline (no Writer trigger: units are sequential and depend on T8's re
   fixed); update the Phase II section of the Google Doc copy of "Proyecto V1" PENDING (blocked:
   no Google Doc copy in Drive yet, Google Docs connector not enabled).
 
-- [ ] T14 — Integrate the teammate's valid Phase II findings (origin/eda-santiago, ca030c1) into
+- [x] T14 — Integrate the teammate's valid Phase II findings (origin/eda-santiago, ca030c1) into
   our format, not his notebooks (Log L8-L9): short intervals < 240 s (test 1: 9, test 3: 2); the
   13 s pair "posible duplicado" check; content-hash duplicate check over all files (inventory);
   explicit flat-signal criterion as a cross-check of post-shutdown flags; x/y axis correlation
@@ -350,3 +350,10 @@ Next phase (out of scope here): CRISP-DM Phase III (feature matrix, windowing, l
 - L9 (2026-10-19) — User: "Incluso si alo no integrar como tal sus notebooks si no integrar lo util
   en los nuetsros para mantener un formato." Delivery (earlier): "stack a main pero usando merge
   foreward". T14 added; lands on feat/eda-nasa-ims, then merged forward into feat/data-preparation.
+- L10 (2026-10-19) — T14 a751f86 (inventory content_sha256 + duplicate_content_count, 5 tests
+  RED->GREEN; 0 content duplicates in 9464 files; short intervals 9/0/2; 13 s pair not identical;
+  flat-signal check = same 3 post-shutdown files; Spearman x/y RMS 0.80-0.96 vs kurtosis/crest
+  0.15-0.78; rails -5.000/+4.998). Merged forward into feat/data-preparation (8f20e58, 96 passed).
+  Native review slice cb5fc91..8f20e58 approved+acknowledged; advisories: hardcoded phrases in nb01
+  readings, duplicate-count logic reimplemented in nb01, KeyError on stale inventory without
+  content_sha256, second read_bytes outside try/except. Full-branch candidate: budget exceeded.
