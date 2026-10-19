@@ -20,6 +20,7 @@ dependencies = [
 [project.scripts]
 bearing-download = "bearing_predictive_maintenance.data:main"
 bearing-indicators = "bearing_predictive_maintenance.indicators:main"
+bearing-manifest = "bearing_predictive_maintenance.manifest:main"
 
 [build-system]
 requires = ["hatchling"]

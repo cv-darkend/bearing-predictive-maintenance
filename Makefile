@@ -1,4 +1,4 @@
-.PHONY: setup data indicators marimo notebook notebooks format lint typecheck test check
+.PHONY: setup data indicators manifest marimo notebook notebooks format lint typecheck test check
 
 NOTEBOOK_NAMES := $(basename $(notdir $(wildcard notebooks/*.py)))
 
@@ -10,6 +10,9 @@ data:
 
 indicators:
 	uv run bearing-indicators
+
+manifest:
+	uv run bearing-manifest
 
 marimo:
 	uv run marimo edit notebooks
