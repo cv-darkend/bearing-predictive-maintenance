@@ -78,8 +78,9 @@ Route: all inline (no Writer trigger: units are sequential and depend on T8's re
   validates parameters (F4); NaN handling in `detect_onset`/`flag_post_shutdown` (F3);
   `summarize_inventory` exposes read-error/non-finite counts (F1); unused params removed;
   inventory/registry assertions the review found missing.
-- [ ] T13 — Re-audit with `data-auditor` (claims) and `make check`; then update the Phase II
-  section of the Google Doc copy of "Proyecto V1" (blocked: Google Docs connector).
+- [~] T13 — Re-audit with `data-auditor` (claims) and `make check` DONE (0f7d37e, recheck B1-B3
+  fixed); update the Phase II section of the Google Doc copy of "Proyecto V1" PENDING (blocked:
+  no Google Doc copy in Drive yet, Google Docs connector not enabled).
 
 ## Acceptance criteria
 
@@ -326,3 +327,12 @@ Next phase (out of scope here): CRISP-DM Phase III (feature matrix, windowing, l
   9/47/89 samples; operating hours 345.3/163.8/1053.4; descriptive stats; trimmed-kurtosis
   robustness; max-in-window 59.4 at 92.6 h; shape-factor wording; operating-hours positives
   146/291/435 for test 1; cadence wording in notebook 01).
+- L7 (2026-10-18) — Recheck by data-auditor: B1-B3 fixed (residual wording: trends paragraph
+  still lists bearing 3 kurtosis as "subida clara"; "+0.3%" holds for test 2 only (test 3
+  -0.17%); "shaft lines too weak" has no notebook cell). Native review: full branch candidate
+  failed lens_context_budget_exceeded; reviewed slice base 75f1a45 (tree 2c9a779) .. 0f7d37e,
+  lineage review-c7023b62c51a70d4, lenses readability+reliability -> approved, acknowledged.
+  Non-blocking advisories (later work): R2-001 operating-hours rule duplicated in nb01/nb02;
+  R2-002 kurtosis 8 / 72 h / 150 h literals; R2-003/R3-002 hardcoded numbers in markdown (F7);
+  R2-004 fault_peak docstring "2.2%"; R3-001 summarize_inventory KeyError on stale inventory
+  without n_saturated; R3-003 SATURATION_LEVEL 4.99 vs ±4.999 boundary untested.
