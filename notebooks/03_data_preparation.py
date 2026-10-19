@@ -46,14 +46,16 @@ def _(mo):
 
 @app.cell
 def _():
+    import time
     from pathlib import Path
 
     import matplotlib.pyplot as plt
     import numpy as np
     import pandas as pd
 
-    from bearing_predictive_maintenance import ims
+    from bearing_predictive_maintenance import ims, spectral
     from bearing_predictive_maintenance.folds import leave_one_test_out, standardize_by_fold
+    from bearing_predictive_maintenance.indicators import TIME_DOMAIN_INDICATOR_NAMES
     from bearing_predictive_maintenance.inventory import SATURATION_LEVEL
     from bearing_predictive_maintenance.manifest import (
         MANIFEST_COLUMNS,
@@ -67,6 +69,7 @@ def _():
         SUMMARY_STATISTICS,
         remove_dc,
         segment_indicators,
+        split_segments,
         summarize_segments,
     )
 
@@ -112,6 +115,7 @@ def _():
         SATURATION_LEVEL,
         SEGMENT_LENGTH,
         SUMMARY_STATISTICS,
+        TIME_DOMAIN_INDICATOR_NAMES,
         ims,
         leave_one_test_out,
         np,
@@ -119,8 +123,11 @@ def _():
         plt,
         remove_dc,
         segment_indicators,
+        spectral,
+        split_segments,
         standardize_by_fold,
         summarize_segments,
+        time,
     )
 
 
@@ -356,7 +363,9 @@ def _(EXAMPLE_HORIZONS_H, horizon_illustration, mo):
 @app.cell
 def _(N_SEGMENTS, SEGMENT_LENGTH, ims):
     # Spectral resolution of the two windows of the "Mixto" design, against the
-    # +/-3% relative search window used for fault lines in Phase II (notebook 02).
+    # +/-3% relative search window used for fault lines in Phase II. The literal
+    # mirrors FAULT_REL_TOLERANCE of notebooks/02_signal_exploration.py: src/ has
+    # no shared constant for it.
     FAULT_REL_TOLERANCE = 0.03
     _fs = ims.SAMPLING_RATE_HZ
     _bpfo = ims.characteristic_fault_frequencies().bpfo
@@ -411,7 +420,17 @@ def _(FAULT_REL_TOLERANCE, mo, resolution):
 
 
 @app.cell
-def _(FAILURE_MODE_ES, RAW_ROOT, ims, manifest, pd, remove_dc, segment_indicators):
+def _(
+    FAILURE_MODE_ES,
+    RAW_ROOT,
+    SATURATION_LEVEL,
+    ims,
+    manifest,
+    np,
+    pd,
+    remove_dc,
+    segment_indicators,
+):
     _last_rows = (
         manifest[manifest["valid"] & manifest["documented_failure"]]
         .loc[lambda frame: frame["axis"].isin(["x", "single"])]
@@ -425,7 +444,8 @@ def _(FAILURE_MODE_ES, RAW_ROOT, ims, manifest, pd, remove_dc, segment_indicator
     for _row in _last_rows.itertuples():
         _spec = ims.TEST_REGISTRY[_row.test_id]
         _array = ims.load_snapshot(RAW_ROOT / _spec.raw_relative_path / _row.file)
-        _signal = remove_dc(_array[:, int(_row.channel) - 1])
+        _raw_channel = _array[:, int(_row.channel) - 1]
+        _signal = remove_dc(_raw_channel)
         _mode = FAILURE_MODE_ES[_row.failure_mode]
         _label = f"Test {_row.test_id} - Rodamiento {int(_row.bearing)} ({_mode})"
         demo_snapshots.append(
@@ -435,6 +455,8 @@ def _(FAILURE_MODE_ES, RAW_ROOT, ims, manifest, pd, remove_dc, segment_indicator
                 "channel": int(_row.channel),
                 "bearing": int(_row.bearing),
                 "label": _label,
+                # Samples clipped at the acquisition limit (inventory.SATURATION_LEVEL).
+                "saturated_samples": int(np.sum(np.abs(_raw_channel) >= SATURATION_LEVEL)),
             }
         )
         _table = segment_indicators(_signal)[["rms", "kurtosis", "crest_factor"]]
@@ -457,7 +479,11 @@ def _(SUMMARY_STATISTICS, demo_snapshots, indicators, pd, segment_table, summari
             & (indicators["file"] == _snapshot["file"])
             & (indicators["channel"] == _snapshot["channel"])
         ].iloc[0]
-        _row = {"caso": _snapshot["label"], "archivo": _snapshot["file"]}
+        _row = {
+            "caso": _snapshot["label"],
+            "archivo": _snapshot["file"],
+            "muestras_saturadas": _snapshot["saturated_samples"],
+        }
         for _statistic in SUMMARY_STATISTICS:
             _row.update(summarize_segments(_table, _statistic).to_dict())
         _row["rms_captura_completa"] = float(_full["rms"])
@@ -468,6 +494,7 @@ def _(SUMMARY_STATISTICS, demo_snapshots, indicators, pd, segment_table, summari
         [
             "caso",
             "archivo",
+            "muestras_saturadas",
             "rms_median",
             "rms_max",
             "rms_captura_completa",
@@ -511,18 +538,314 @@ def _(BEARING_COLORS, FIGURES_DIR, demo_snapshots, plt, segment_table):
 
 
 @app.cell(hide_code=True)
-def _(mo, segment_summary):
+def _(SATURATION_LEVEL, mo, segment_summary):
     _rms_ratio = segment_summary["rms_max"] / segment_summary["rms_median"]
     _ratio = segment_summary["kurtosis_max"] / segment_summary["kurtosis_median"]
     _widest = segment_summary.loc[_ratio.idxmax()]
+    _files = segment_summary.drop_duplicates("archivo")
+    _saturated = "; ".join(
+        f"{_row.caso}: {_row.muestras_saturadas}" for _row in _files.itertuples()
+    )
+    _n_saturated_files = int((_files["muestras_saturadas"] > 0).sum())
     mo.md(f"""
-    En los cuatro casos el RMS varía poco entre segmentos (el máximo por segmento es entre
-    {_rms_ratio.min():.2f} y {_rms_ratio.max():.2f} veces la mediana), mientras que la curtosis
-    varía más: el caso con mayor dispersión es {_widest["caso"]}, donde la curtosis máxima por
-    segmento es {_ratio.max():.2f} veces la mediana ({_widest["kurtosis_max"]:.2f} frente a
-    {_widest["kurtosis_median"]:.2f}; la curtosis de la captura completa es
-    {_widest["kurtosis_captura_completa"]:.2f}). Por eso se guardan los tres resúmenes y la
-    selección se deja a la Fase IV.
+    Los cuatro casos corresponden a {segment_summary["archivo"].nunique()} archivos distintos (los
+    rodamientos 3 y 4 del test 1 comparten archivo). En los cuatro casos el RMS varía poco entre
+    segmentos (el máximo por segmento es entre {_rms_ratio.min():.2f} y {_rms_ratio.max():.2f}
+    veces la mediana), mientras que la curtosis varía más: el caso con mayor dispersión es
+    {_widest["caso"]}, donde la curtosis máxima por segmento es {_ratio.max():.2f} veces la
+    mediana ({_widest["kurtosis_max"]:.2f} frente a {_widest["kurtosis_median"]:.2f}; la curtosis
+    de la captura completa es {_widest["kurtosis_captura_completa"]:.2f}). Por eso se guardan los
+    tres resúmenes y la selección se deja a la Fase IV.
+
+    **Advertencia:** {_n_saturated_files} de estos {len(_files)} archivos finales tienen muestras
+    saturadas (±{SATURATION_LEVEL}) en el canal mostrado (columna `muestras_saturadas`, por
+    archivo: {_saturated}). En esos casos los picos, el factor de cresta y la curtosis están
+    recortados, de modo que la tabla subestima la impulsividad real.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Elección de la longitud de ventana
+
+    El documento del proyecto pide que las ventanas sean "de longitud homogénea, definidas con
+    base en criterios de estabilidad estadística, contenido espectral y capacidad computacional".
+    La sección anterior justifica el contenido espectral; esta sección compara las longitudes
+    L = 1024, 2048, 4096, 10240 y 20480 muestras frente a los tres criterios, sobre una muestra
+    de todo el conjunto y no solo sobre las capturas finales.
+
+    **Muestra.** Para cada rodamiento con falla documentada (canal del eje x en el test 1, canal
+    único en los tests 2 y 3; capturas válidas del manifiesto) se toman tres grupos: las 20
+    primeras capturas válidas (`inicio`), 20 capturas espaciadas uniformemente a lo largo del test
+    (`a_lo_largo`) y las 20 últimas capturas válidas (`final`). En el test 1 los rodamientos 3 y 4
+    comparten archivos y se miden en sus propios canales.
+
+    **Criterios, para cada L:**
+
+    - *Estabilidad estadística:* coeficiente de variación (desviación estándar poblacional sobre
+      la media) del RMS y de la curtosis entre los segmentos contiguos y sin solapamiento de cada
+      captura (`segmentation.segment_indicators`); se reportan su mediana y su percentil 90 por
+      grupo. Con L = 20480 hay un solo segmento y el coeficiente no está definido (n/a).
+    - *Contenido espectral:* resolución fs/L frente al ancho de la ventana de búsqueda de ±3%
+      alrededor de BPFO.
+    - *Capacidad computacional:* tiempo de pared por captura (`time.perf_counter`, mediana) de
+      `segment_indicators` sobre los segmentos de longitud L más un espectro de envolvente
+      (`spectral.envelope_spectrum`, banda fija 2300-3800 Hz, la elegida en la Fase II para el
+      test 2) por cada ventana de longitud L, y el número de filas y de valores resultantes por
+      captura y para las filas válidas del manifiesto. La banda fija solo sirve para medir costo;
+      no es una elección de características.
+
+    Antecedente de la Fase II (`reports/eda_nasa_ims.md`, "Estabilidad de los segmentos"): con
+    segmentos de 2048 muestras, el coeficiente de variación mediano del RMS entre segmentos es de
+    2% a 5.5%, y el de la curtosis llega a 32% al final del test 1 (rodamiento 3).
+    """)
+    return
+
+
+@app.cell
+def _(manifest, np, pd):
+    WINDOW_LENGTHS = (1024, 2048, 4096, 10240, 20480)
+    SAMPLE_PER_GROUP = 20
+    # Fixed band (Phase II choice for test 2), used only to time one envelope spectrum.
+    TIMING_ENVELOPE_BAND_HZ = (2300.0, 3800.0)
+    _failed = (
+        manifest[manifest["valid"] & manifest["documented_failure"]]
+        .loc[lambda frame: frame["axis"].isin(["x", "single"])]
+        .sort_values(["test_id", "bearing", "timestamp"])
+    )
+    _parts = []
+    for _key, _rows in _failed.groupby(["test_id", "bearing"]):
+        _rows = _rows.reset_index(drop=True)
+        _even = np.unique(np.linspace(0, len(_rows) - 1, SAMPLE_PER_GROUP).round().astype(int))
+        _parts.append(_rows.head(SAMPLE_PER_GROUP).assign(grupo="inicio"))
+        _parts.append(_rows.iloc[_even].assign(grupo="a_lo_largo"))
+        _parts.append(_rows.tail(SAMPLE_PER_GROUP).assign(grupo="final"))
+    window_sample = pd.concat(_parts, ignore_index=True)
+    window_sample.groupby(["test_id", "bearing", "grupo"]).size().unstack()
+    return TIMING_ENVELOPE_BAND_HZ, WINDOW_LENGTHS, window_sample
+
+
+@app.cell
+def _(
+    RAW_ROOT,
+    TIMING_ENVELOPE_BAND_HZ,
+    WINDOW_LENGTHS,
+    ims,
+    pd,
+    remove_dc,
+    segment_indicators,
+    spectral,
+    split_segments,
+    time,
+    window_sample,
+):
+    def coefficient_of_variation(values: pd.Series) -> float:
+        # Undefined with a single segment (L = 20480).
+        if len(values) < 2:
+            return float("nan")
+        return float(values.std(ddof=0) / values.mean())
+
+    _fs = ims.SAMPLING_RATE_HZ
+    _arrays = {}
+    _rows = []
+    for _row in window_sample.itertuples():
+        _key = (_row.test_id, _row.file)
+        if _key not in _arrays:
+            _spec = ims.TEST_REGISTRY[_row.test_id]
+            _arrays[_key] = ims.load_snapshot(RAW_ROOT / _spec.raw_relative_path / _row.file)
+        _signal = remove_dc(_arrays[_key][:, int(_row.channel) - 1])
+        for _length in WINDOW_LENGTHS:
+            _start = time.perf_counter()
+            _table = segment_indicators(_signal, _length)
+            for _window in split_segments(_signal, _length):
+                spectral.envelope_spectrum(_window, _fs, TIMING_ENVELOPE_BAND_HZ)
+            _elapsed = time.perf_counter() - _start
+            _rows.append(
+                {
+                    "test_id": _row.test_id,
+                    "bearing": int(_row.bearing),
+                    "grupo": _row.grupo,
+                    "saturated_file": bool(_row.saturated_file),
+                    "L": _length,
+                    "cv_rms": coefficient_of_variation(_table["rms"]),
+                    "cv_kurtosis": coefficient_of_variation(_table["kurtosis"]),
+                    "seconds": _elapsed,
+                }
+            )
+    # Cost of the chosen "Mixto" design on the same snapshots: time-domain indicators
+    # on 2048-sample segments plus one envelope spectrum of the full snapshot.
+    _mixed_seconds = []
+    for _row in window_sample.itertuples():
+        _signal = remove_dc(_arrays[(_row.test_id, _row.file)][:, int(_row.channel) - 1])
+        _start = time.perf_counter()
+        segment_indicators(_signal)
+        spectral.envelope_spectrum(_signal, _fs, TIMING_ENVELOPE_BAND_HZ)
+        _mixed_seconds.append(time.perf_counter() - _start)
+    window_measurements = pd.DataFrame(_rows)
+    mixed_seconds = pd.Series(_mixed_seconds, name="seconds")
+    n_sample_files = len(_arrays)
+    window_measurements.head()
+    return mixed_seconds, n_sample_files, window_measurements
+
+
+@app.cell
+def _(
+    FAULT_REL_TOLERANCE,
+    TIME_DOMAIN_INDICATOR_NAMES,
+    WINDOW_LENGTHS,
+    ims,
+    pd,
+    resolution,
+    valid_rows,
+    window_measurements,
+):
+    _n_valid = len(valid_rows)
+    _rows = []
+    for _length in WINDOW_LENGTHS:
+        _subset = window_measurements[window_measurements["L"] == _length]
+        _row = {"L": _length}
+        for _group in ("inicio", "a_lo_largo", "final"):
+            _values = _subset[_subset["grupo"] == _group]
+            for _metric, _name in (("cv_rms", "cv_rms"), ("cv_kurtosis", "cv_curtosis")):
+                _row[f"{_name}_mediana_{_group}"] = _values[_metric].median()
+                _row[f"{_name}_p90_{_group}"] = _values[_metric].quantile(0.9)
+        _n_windows = ims.EXPECTED_ROWS_PER_SNAPSHOT // _length
+        _df = ims.SAMPLING_RATE_HZ / _length
+        _seconds = float(_subset["seconds"].median())
+        _row.update(
+            {
+                "resolucion_hz": _df,
+                "lineas_en_ventana_bpfo": resolution["window_width_hz"] / _df,
+                "ms_por_captura": 1e3 * _seconds,
+                "ventanas_por_captura": _n_windows,
+                "filas_conjunto_si_ventana_es_fila": _n_windows * _n_valid,
+                "valores_tiempo_por_captura": _n_windows * len(TIME_DOMAIN_INDICATOR_NAMES),
+                "lineas_envolvente_por_captura": _n_windows * (_length // 2 + 1),
+                "segundos_conjunto": _seconds * _n_valid,
+            }
+        )
+        _rows.append(_row)
+    window_comparison = pd.DataFrame(_rows).set_index("L")
+    assert FAULT_REL_TOLERANCE == 0.03  # the window width in `resolution` uses it
+    window_comparison.T.round(4)
+    return (window_comparison,)
+
+
+@app.cell(hide_code=True)
+def _(
+    TIME_DOMAIN_INDICATOR_NAMES,
+    mixed_seconds,
+    mo,
+    n_sample_files,
+    pd,
+    resolution,
+    valid_rows,
+    window_comparison,
+    window_measurements,
+    window_sample,
+):
+    def pct(value: float) -> str:
+        return "n/a" if pd.isna(value) else f"{value:.1%}"
+
+    _c = window_comparison
+    _lines = []
+    for _length, _r in _c.iterrows():
+        _lines.append(
+            f"| {_length} | {pct(_r['cv_rms_mediana_inicio'])} / {pct(_r['cv_rms_mediana_final'])} "
+            f"| {pct(_r['cv_rms_p90_final'])} "
+            f"| {pct(_r['cv_curtosis_mediana_inicio'])} / {pct(_r['cv_curtosis_mediana_final'])} "
+            f"| {pct(_r['cv_curtosis_p90_final'])} "
+            f"| {_r['resolucion_hz']:.3f} | {_r['lineas_en_ventana_bpfo']:.2f} "
+            f"| {_r['ms_por_captura']:.2f} | {int(_r['ventanas_por_captura'])} "
+            f"| {int(_r['filas_conjunto_si_ventana_es_fila'])} | {_r['segundos_conjunto']:.0f} |"
+        )
+    _header = [
+        "| L | CV RMS mediana (inicio / final) | CV RMS p90 final "
+        "| CV curtosis mediana (inicio / final) | CV curtosis p90 final | fs/L (Hz) "
+        "| Líneas en ±3% BPFO | ms por captura | Ventanas | Filas del conjunto "
+        "| s del conjunto |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    _table = "\n".join(_header + _lines)
+    _n_valid = len(valid_rows)
+    _mixed_ms = 1e3 * float(mixed_seconds.median())
+    _saturated = int(window_sample["saturated_file"].sum())
+    _saturated_by_group = ", ".join(
+        f"{_count} en `{_group}`"
+        for _group, _count in window_sample[window_sample["saturated_file"]]
+        .groupby("grupo")
+        .size()
+        .items()
+    )
+    _l2048 = _c.loc[2048]
+    _l4096 = _c.loc[4096]
+    _l10240 = _c.loc[10240]
+    _per_bearing = (
+        window_measurements[
+            (window_measurements["L"] == 2048) & (window_measurements["grupo"] == "final")
+        ]
+        .groupby(["test_id", "bearing"])["cv_kurtosis"]
+        .median()
+    )
+    _late_max = _per_bearing.idxmax()
+    _multi = _c[_c["ventanas_por_captura"] > 1]
+    # Guards for the qualitative statements written in the narrative below.
+    assert (_multi["cv_curtosis_mediana_final"] > _multi["cv_curtosis_mediana_inicio"]).all()
+    assert max(_l2048["cv_rms_mediana_inicio"], _l2048["cv_rms_mediana_final"]) < 0.05
+    assert (_c.loc[[4096, 10240], "cv_rms_mediana_final"] < _l2048["cv_rms_mediana_final"]).all()
+    assert list(_c.index[_c["lineas_en_ventana_bpfo"] > 10]) == [20480]
+    _max_minutes = float(_c["segundos_conjunto"].max()) / 60
+    mo.md(f"""
+    Muestra medida: {len(window_sample)} pares (captura, canal) de {n_sample_files} archivos
+    distintos; {_saturated} de esos pares son archivos con saturación
+    ({_saturated_by_group}; el grupo `a_lo_largo` incluye ambos extremos del test, también la
+    última captura válida).
+    Tiempos medidos en esta máquina, en un solo hilo; son órdenes de magnitud, no un banco de
+    pruebas. Columnas: coeficiente de variación (CV) mediano `inicio` / `final` y percentil 90
+    `final`, resolución, líneas espectrales dentro de la ventana de ±3% de BPFO
+    ({resolution["window_width_hz"]:.2f} Hz), tiempo mediano por captura, ventanas por captura,
+    filas del conjunto si cada ventana fuera una fila ({_n_valid} filas válidas × ventanas) y
+    tiempo estimado para todo el conjunto.
+
+    {_table}
+
+    **Estabilidad estadística.** El CV entre segmentos baja al crecer L, porque cada estimación
+    usa más muestras: con L = 2048 el CV mediano del RMS es {pct(_l2048["cv_rms_mediana_inicio"])}
+    al inicio y {pct(_l2048["cv_rms_mediana_final"])} al final (coherente con el 2-5.5% de la
+    Fase II), y el de la curtosis {pct(_l2048["cv_curtosis_mediana_inicio"])} y
+    {pct(_l2048["cv_curtosis_mediana_final"])}, con un percentil 90 final de
+    {pct(_l2048["cv_curtosis_p90_final"])}; el mayor CV mediano final de la curtosis es el del
+    test {_late_max[0]}, rodamiento {_late_max[1]} ({pct(_per_bearing.max())}). Con L = 4096 los
+    valores bajan a {pct(_l4096["cv_rms_mediana_final"])} (RMS) y
+    {pct(_l4096["cv_curtosis_mediana_final"])} (curtosis) al final, y con L = 10240 a
+    {pct(_l10240["cv_rms_mediana_final"])} y {pct(_l10240["cv_curtosis_mediana_final"])}. Por sí
+    solo, este criterio favorece ventanas más largas. Pero parte de la variación al final no es
+    ruido de estimación sino la actividad impulsiva del defecto, que no aparece en todos los
+    segmentos: el CV de la curtosis sube del inicio al final en todas las L con más de un
+    segmento. Las ventanas largas la promedian, y con 2 segmentos (L = 10240) ya no se pueden
+    calcular resúmenes robustos como el percentil 90.
+
+    **Contenido espectral.** Solo la captura completa (L = 20480) da más de 10 líneas dentro de
+    la ventana de ±3% de BPFO; L = 10240 da {_l10240["lineas_en_ventana_bpfo"]:.1f} y L = 2048
+    da {_l2048["lineas_en_ventana_bpfo"]:.2f}.
+
+    **Capacidad computacional.** Ninguna longitud es restrictiva: el costo por captura es de
+    milisegundos, y el conjunto completo ({_n_valid} filas válidas) se procesa en a lo sumo
+    {_max_minutes:.0f} min con cualquier L. El diseño "Mixto" (indicadores en 10 segmentos de
+    2048 más un espectro de envolvente de la captura completa) cuesta {_mixed_ms:.2f} ms por
+    captura, unos {_mixed_ms * _n_valid / 1e3:.0f} s para el conjunto, y produce una fila por
+    captura con {len(TIME_DOMAIN_INDICATOR_NAMES)} indicadores × 3 resúmenes de tiempo. Las
+    ventanas cortas multiplican las filas y los valores de tiempo (L = 1024 daría
+    {int(_c.loc[1024, "filas_conjunto_si_ventana_es_fila"])} filas), sin ganancia espectral.
+
+    **Conclusión.** El diseño "Mixto" queda respaldado, con un matiz honesto: L = 2048 no es la
+    longitud más estable (L = 4096 o 10240 dan CV menores), sino el compromiso que mantiene el CV
+    del RMS por debajo de 5% en la mediana y conserva 10 segmentos para los resúmenes mediana, p90
+    y máximo que capturan la impulsividad tardía. L = 4096 (5 segmentos) es una alternativa
+    razonable para la Fase IV si se prefiere estabilidad sobre detalle. Para el espectro, los
+    datos favorecen claramente la captura completa. El costo no discrimina entre opciones.
     """)
     return
 
@@ -542,7 +865,28 @@ def _(mo):
     se ajusta **solo con las filas de los tests de entrenamiento** de cada partición
     (`folds.standardize_by_fold`) y luego se aplica a todas las filas. El test que queda fuera
     nunca influye en los parámetros. Lo mismo aplica a cualquier parámetro aprendido de los datos
-    (por ejemplo, umbrales o la tolerancia de búsqueda espectral) en las fases siguientes.
+    (por ejemplo, umbrales o la tolerancia de búsqueda espectral) en las fases siguientes. En
+    particular, las bandas de envolvente de la Fase II se eligieron mirando capturas del final de
+    la vida útil, y la tolerancia de ±3% alrededor de las frecuencias de falla se tomó de esa misma
+    exploración: ambas deben fijarse a priori (antes de ver el test de prueba) o reajustarse dentro
+    de cada partición solo con los tests de entrenamiento.
+
+    **Columnas del manifiesto que no son características.** Las columnas siguientes sirven solo
+    para filtrar, particionar y etiquetar; la Fase IV y la Fase V **no** deben usarlas como
+    entradas del modelo, porque filtran información del final de la vida útil o de la identidad
+    del test o del rodamiento:
+
+    - `hours_to_end_clock`, `hours_to_end_operating`: son la distancia al final, es decir, la
+      variable de la que se deriva la etiqueta.
+    - `clock_hours`, `operating_hours`: sumadas con las horas hasta el final dan una constante por
+      test, y los tests tienen duraciones distintas, de modo que revelan cuánto falta.
+    - `saturated_file`: solo es verdadera en archivos de la última hora (o menos) de cada test,
+      cuya saturación está en los canales que fallan.
+    - `after_documented_end`, `documented_failure`, `failure_mode`: describen el desenlace del
+      test o del rodamiento.
+    - `valid`, `post_shutdown`: marcas de limpieza para filtrar.
+    - `test_id`, `bearing`, `channel`, `timestamp`: identidad y fecha (el rodamiento 3 falla en 2
+      de los 3 tests, de modo que `bearing` correlaciona con la falla).
     """)
     return
 

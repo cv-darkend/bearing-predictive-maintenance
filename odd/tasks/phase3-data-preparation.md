@@ -39,7 +39,7 @@ strategy asked before PR creation) · runner `uv run pytest`, `make check`.
 - [x] T2 — S4, S6: `segmentation.py` (+ tests): DC removal, full window + 10 segments of 2048;
   `folds.py` (+ tests): leave-one-test-out splits and train-only standardization. Route: delegated
   (parallel with T1).
-- [ ] T3 — S7: notebook 03 + report + Makefile/pyproject wiring + README. Route: after T1-T2.
+- [x] T3 — S7: notebook 03 + report + Makefile/pyproject wiring + README. Route: after T1-T2.
 - [ ] T4 — Verify with `data-auditor` (counts, axes, leakage), `make check`.
 
 ## Log
