@@ -70,10 +70,18 @@ En los tres tests, todos los archivos tienen 20480 filas, ninguno falla al leers
 (0 errores de lectura), ninguno contiene valores no numéricos o no finitos (0 valores no
 finitos), todos tienen el número de columnas que documenta el mapa de canales y no hay
 timestamps duplicados (columnas de integridad de la misma tabla): no hay evidencia de
-archivos corruptos o mezclados entre tests.
+archivos corruptos o mezclados entre tests. Tampoco hay duplicados por contenido: el
+inventario guarda el hash SHA-256 de los bytes crudos de cada archivo (`content_sha256`)
+y ninguno de los 9464 archivos repite el hash de otro (columna
+`archivos_contenido_duplicado` = 0 en los tres tests; notebook 01, sección "Duplicados por
+contenido y el par de capturas a 13 s"). El par de capturas más cercano en el tiempo
+(test 1, `2003.11.23.20.01.11` y `2003.11.23.20.01.24`, 13 s), candidato a "posible
+duplicado", no lo es: el RMS por canal difiere entre 0.3% y 1.2% y la correlación muestra
+a muestra es como mucho 0.17; son dos adquisiciones distintas y se conservan ambas.
 
 **Saturación** (notebook 01, sección "Saturación del sistema de adquisición"): algunas
-muestras alcanzan el límite de adquisición (±4.999), solo en las capturas finales de cada
+muestras alcanzan el límite de adquisición (rieles −5.000 / +4.998; se cuentan las
+muestras con |x| ≥ 4.99), solo en las capturas finales de cada
 test: 3 archivos del test 1 (9 muestras, desde las 23:13:21 del último día), 2 del test 2
 (47 muestras, entre las 05:02:39 y las 05:42:39) y 4 del test 3 (89 muestras, desde las
 01:32:55). En esas muestras la amplitud real es desconocida, y las capturas tardías que
@@ -93,6 +101,10 @@ el umbral). El test 3 tiene 4 huecos por encima del umbral (el mayor ≈7.5 hora
 cadencia tampoco es uniforme dentro de la operación del test 1: además de los primeros
 ≈43 archivos tomados cada 5 minutos que documenta el `readme`, hay una segunda ráfaga a
 5 minutos el 2003-11-20, entre las 11:54 y las 20:39 (106 archivos, 105 huecos de 300 s).
+Hay además intervalos aislados de menos de 240 s (notebook 01, sección "Intervalos cortos"):
+9 en el test 1 (8 justo después de una pausa y 1 al inicio del test; el más corto, 13 s),
+ninguno en el test 2 y 2 en el test 3 (143 s y 62 s, ambos tras una pausa). Son
+reanudaciones de la adquisición, no errores.
 
 **Discrepancia del test 3** (notebook 01, sección "Discrepancia del test 3"): el
 directorio crudo contiene 6324 archivos, no los 4448 documentados en el `readme` de
@@ -109,6 +121,11 @@ tiene **2** (las dos últimas: 2004-02-19 06:12:39 y 06:22:39); el test 3 tiene 
 (2004-04-18 02:42:55). Su RMS es casi nulo frente al de la captura anterior. Estas
 capturas indican que el banco ya estaba apagado antes de terminar de grabar, y deben
 excluirse de cualquier análisis de degradación o del cálculo de "última captura válida".
+Un criterio independiente de señal plana (desviación estándar máxima entre canales por
+archivo < 5% de la mediana del test; notebook 01, sección "Verificación cruzada") marca
+exactamente las mismas 3 capturas, con valores relativos de 0.013-0.019, mientras que la
+siguiente captura más baja de cada test está en ≥ 0.80: la exclusión no depende del
+umbral elegido.
 
 ## Hallazgos del análisis exploratorio (notebook 02)
 
@@ -150,8 +167,13 @@ nominal (600 s).
 
 **Correlación entre ejes y entre indicadores** (notebook 02, sección "Correlación entre
 ejes x/y"): la correlación de Pearson entre el RMS del eje x y del eje y del test 1 es
-alta para los cuatro rodamientos (0.93, 0.95, 0.99 y 0.99 para los rodamientos 1 a 4),
-lo que indica una redundancia considerable entre ambos ejes para este indicador. En la
+alta para los cuatro rodamientos (0.93, 0.95, 0.99 y 0.99 para los rodamientos 1 a 4; en
+correlación de rangos de Spearman, 0.89, 0.80, 0.91 y 0.96), lo que indica una
+redundancia considerable entre ambos ejes **solo para el RMS**. Para los indicadores de
+impulsividad la correlación de Spearman entre ejes es mucho menor (curtosis 0.39, 0.40,
+0.48 y 0.78; factor de cresta 0.15, 0.16, 0.47 y 0.45): en rodamientos sanos la
+impulsividad de cada eje varía de forma casi independiente, así que promediar o descartar
+un eje pierde información impulsiva. En la
 matriz de correlación entre los diez indicadores de tiempo (test 1):
 
 - RMS, desviación estándar y energía son redundantes entre sí (|r| 0.90-1.00).
@@ -313,7 +335,10 @@ exploratoria de orden de magnitud.
   la captura de fin de vida, la tolerancia de ±3% de la búsqueda de picos se eligió tras
   ver el pico de pista externa, y los umbrales de onset y de apagado usan la propia serie.
   Si se reutilizan en la Fase III son fuga de la etiqueta: deben fijarse a priori o
-  ajustarse solo con los datos de entrenamiento de cada partición.
+  ajustarse solo con los datos de entrenamiento de cada partición. Para la envolvente,
+  una banda fija elegida sin mirar las capturas de fin de vida (por ejemplo 2-8 kHz, la
+  usada en una exploración paralela del equipo) es una opción sin fuga para la Fase IV;
+  este informe no recalculó los resultados de envolvente con esa banda.
 - **Desbalance de clases estimado** (candidatos, no decisiones; notebook 02, sección de
   cierre), positivos = snapshots dentro de las últimas H horas del rango válido de cada
   rodamiento fallado:
@@ -382,7 +407,7 @@ exploratoria de orden de magnitud.
 8. El submuestreo usado en la evolución temporal (cada 5/3/15 archivos) reduce el costo
    de cómputo pero también la resolución temporal exacta del onset; una versión posterior
    podría usar el conjunto completo si el presupuesto de cómputo lo permite.
-9. Las capturas finales de cada test tienen muestras saturadas (±4.999): sus picos y su
+9. Las capturas finales de cada test tienen muestras saturadas (rieles −5.000 / +4.998): sus picos y su
    curtosis están recortados, justo donde la degradación es mayor.
 10. Este informe cubre solo NASA IMS. El análisis exploratorio del conjunto CWRU que
    menciona el documento del proyecto no tiene código ni resultados en este repositorio.
