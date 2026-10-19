@@ -59,6 +59,12 @@ def compute_time_domain_indicators(signal: np.ndarray) -> pd.DataFrame:
     Returns a DataFrame indexed by 1-based channel (matching raw file column order)
     with one column per indicator in ``TIME_DOMAIN_INDICATOR_NAMES``.
 
+    ``mean`` is the DC level of the channel. Every amplitude indicator (``rms``,
+    ``peak``, ``peak_to_peak``, ``energy`` and the crest, impulse and shape factors) is
+    computed on the mean-removed signal, so a sensor DC offset does not mask the
+    vibration: test 1 channels carry an offset of the same size as their vibration. As a
+    result ``rms`` equals ``std``.
+
     ``std`` is the population standard deviation (``ddof=0``): each snapshot is a
     complete, fixed-size population, not a sample. ``kurtosis`` uses Pearson's
     definition, where a normal distribution has kurtosis 3 (not Fisher's "excess"
@@ -69,14 +75,15 @@ def compute_time_domain_indicators(signal: np.ndarray) -> pd.DataFrame:
         raise ValueError(f"Expected a 2D (rows, channels) array, got shape {signal.shape}.")
 
     n_channels = signal.shape[1]
-    abs_signal = np.abs(signal)
     mean = np.mean(signal, axis=0)
-    mean_abs = np.mean(abs_signal, axis=0)
+    centered = signal - mean
+    abs_centered = np.abs(centered)
+    mean_abs = np.mean(abs_centered, axis=0)
     std = np.std(signal, axis=0, ddof=0)
-    rms = np.sqrt(np.mean(signal**2, axis=0))
-    peak = np.max(abs_signal, axis=0)
+    rms = np.sqrt(np.mean(centered**2, axis=0))
+    peak = np.max(abs_centered, axis=0)
     peak_to_peak = np.max(signal, axis=0) - np.min(signal, axis=0)
-    energy = np.sum(signal**2, axis=0)
+    energy = np.sum(centered**2, axis=0)
 
     with warnings.catch_warnings():
         # A near-constant channel makes scipy's moment calculation lose precision;
