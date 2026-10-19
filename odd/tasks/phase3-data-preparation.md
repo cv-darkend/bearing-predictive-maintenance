@@ -40,7 +40,7 @@ strategy asked before PR creation) · runner `uv run pytest`, `make check`.
   `folds.py` (+ tests): leave-one-test-out splits and train-only standardization. Route: delegated
   (parallel with T1).
 - [x] T3 — S7: notebook 03 + report + Makefile/pyproject wiring + README. Route: after T1-T2.
-- [ ] T4 — Verify with `data-auditor` (counts, axes, leakage), `make check`.
+- [x] T4 — Verify with `data-auditor` (counts, axes, leakage), `make check`.
 
 ## Log
 
@@ -56,3 +56,15 @@ strategy asked before PR creation) · runner `uv run pytest`, `make check`.
   345.27/163.83/1053.38). T2 5aea5da (23 tests; sklearn not used: no py.typed under mypy strict;
   test 2 ch1 segment-RMS CV median 2.97%). Wiring 9e7aebc (`make manifest`, README). make check
   91 passed after clearing a stale .mypy_cache. T3 delegated (context backstop).
+- L6 (2026-10-19) — T3 8d89a95. Native reviews approved+acknowledged: T1/T2/wiring slice
+  87b2352..b1b7f91 (lineage review-bd3569fe8328e5a5), T3 slice (review-d01303da2268dd43), window
+  fix slice 8d89a95..ea2a529 (review-099de... target 795f -> sliced lineage approved).
+  data-auditor T4: all numbers reproduce from raw; 1 blocker (window-length evidence for
+  "estabilidad estadística" and "capacidad computacional") fixed in ea2a529 and rechecked
+  (L=2048 RMS CV 3.5/3.0%, kurtosis 7.6/10.4%; 4096 more stable; only 20480 resolves the ±3% BPFO
+  window with 14.52 bins; Mixto ~3.87 ms/snapshot, ~180 s for 46468 rows, raw loading ~7.6 ms
+  per file not included). Advisories (later work): manifest KeyError on unregistered test_id;
+  untested no-valid-capture branch; summarize_segments statistic names duplicated; Fold.held_out
+  typed object; report numbers copied by hand; saturation caveat deduplicated by file instead of
+  channel; unused saturated_file column; H counts boundary (<= vs <) to fix in Phase V; positional
+  mask in folds._as_mask. Phase III closed; next: Phase IV features, Phase V target grid.
