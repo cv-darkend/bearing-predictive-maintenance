@@ -53,6 +53,15 @@ uv run bearing-download --destination data/raw --force
 
 The command downloads and extracts only `vinayak123tyagi/bearing-dataset`. All files under `data/raw/`, `data/interim/`, `data/processed/`, and `data/external/` remain local and ignored by Git.
 
+## Build the derived tables
+
+```bash
+make indicators  # data/interim/: per-file inventory and per-channel time-domain indicators
+make manifest    # data/processed/ims_snapshot_manifest.csv: cleaning flags and time axes
+```
+
+`make manifest` reads the interim tables, so run `make indicators` first.
+
 ## Development commands
 
 ```bash
